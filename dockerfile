@@ -14,6 +14,8 @@ RUN ln -sf /usr/bin/python3 /usr/local/bin/python && \
     ln -sf /usr/bin/pip3 /usr/local/bin/pip
 
 # pip base tools
+COPY requirements.txt .
+
 RUN pip install -r requirements.txt
 
 RUN pip install flash-attn==2.7.4.post1 --no-build-isolation
