@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-source /opt/miniforge/etc/profile.d/conda.sh
 
 export PYTHONPATH=$(pwd):${PYTHONPATH} # let LIBERO find the websocket tools from main repo
 export star_vla_python=/dataset/vkevinzhao/.conda/envs/starVLA/bin/python
