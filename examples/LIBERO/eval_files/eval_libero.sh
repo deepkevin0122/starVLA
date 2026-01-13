@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-set -euo pipefail
 source /opt/miniforge/etc/profile.d/conda.sh
 
 cd /dataset/vkevinzhao/code/starVLA/
-conda activate starVLA
 
 ###########################################################################################
 # === Please modify the following paths according to your environment ===
@@ -11,8 +9,8 @@ export LIBERO_HOME=/dataset/vkevinzhao/code/LIBERO/
 export LIBERO_CONFIG_PATH=${LIBERO_HOME}/libero
 export LIBERO_Python=/dataset/vkevinzhao/.conda/envs/libero/bin/python
 
-export PYTHONPATH=$PYTHONPATH:${LIBERO_HOME} # let eval_libero find the LIBERO tools
-export PYTHONPATH=$(pwd):${PYTHONPATH} # let LIBERO find the websocket tools from main repo
+# export PYTHONPATH=$PYTHONPATH:${LIBERO_HOME} # let eval_libero find the LIBERO tools
+# export PYTHONPATH=$(pwd):${PYTHONPATH} # let LIBERO find the websocket tools from main repo
 
 
 host="127.0.0.1"
