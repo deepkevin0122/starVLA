@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 source /opt/miniforge/etc/profile.d/conda.sh
-
+conda activate libero
 cd /dataset/vkevinzhao/code/starVLA/
 
 ###########################################################################################
