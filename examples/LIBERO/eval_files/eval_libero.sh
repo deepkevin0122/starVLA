@@ -1,4 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
+source /opt/miniforge/etc/profile.d/conda.sh
 
 cd /dataset/vkevinzhao/code/starVLA/
 conda activate starVLA
