@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 source /opt/miniforge/etc/profile.d/conda.sh
 
-# export PYTHONPATH=$(pwd):${PYTHONPATH} # let LIBERO find the websocket tools from main repo
+export PYTHONPATH=$(pwd):${PYTHONPATH} # let LIBERO find the websocket tools from main repo
 export star_vla_python=/dataset/vkevinzhao/.conda/envs/starVLA/bin/python
 your_ckpt=/dataset/vkevinzhao/models/Qwen2.5-VL-GR00T-LIBERO-4in1/checkpoints/steps_30000_pytorch_model.pt
 gpu_id=0
