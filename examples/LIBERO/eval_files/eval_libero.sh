@@ -17,7 +17,8 @@ host="127.0.0.1"
 base_port=5694
 unnorm_key="franka"
 your_ckpt=/dataset/vkevinzhao/models/Qwen2.5-VL-GR00T-LIBERO-4in1/checkpoints/steps_30000_pytorch_model.pt
-export DEBUG=true
+# export DEBUG=true
+unset DEBUG
 
 folder_name=$(echo "$your_ckpt" | awk -F'/' '{print $(NF-2)"_"$(NF-1)"_"$NF}')
 # === End of environment variable configuration ===
