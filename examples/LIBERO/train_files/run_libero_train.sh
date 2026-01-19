@@ -2,8 +2,10 @@
 source /opt/miniforge/etc/profile.d/conda.sh
 conda activate starVLA
 
-export NCCL_SOCKET_IFNAME=bond0
-export NCCL_IB_HCA=mlx5_2,mlx5_3
+# export NCCL_SOCKET_IFNAME=bond0
+# export NCCL_IB_HCA=mlx5_2,mlx5_3
+export NCCL_SOCKET_IFNAME=eth0
+export NCCL_IB_DISABLE=1
 
 # used for check save when communication
 export NCCL_BLOCKING_WAIT=1
