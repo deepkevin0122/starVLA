@@ -398,7 +398,7 @@ class VLAMTrainer(TrainerUtils):
                 output_dict = self.model.forward(batch_vla)
                 action_loss = output_dict["action_loss"]
                 total_loss = action_loss
-            self.accelerator.backward(total_loss)
+            # self.accelerator.backward(total_loss)
 
             
             pass
@@ -406,8 +406,9 @@ class VLAMTrainer(TrainerUtils):
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 vlm_output = self.model.qwen_vl_interface(**batch_vlm)
                 vlm_loss = vlm_output.loss * self.config.trainer.loss_scale.vlm
-
-            self.accelerator.backward(vlm_loss)
+                total_loss += vlm_loss
+            self.accelerator.backward(total_loss)
+            # self.accelerator.backward(vlm_loss)
 
             pass
 
