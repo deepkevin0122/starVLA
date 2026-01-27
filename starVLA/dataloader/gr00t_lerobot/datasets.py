@@ -49,9 +49,15 @@ from starVLA.dataloader.gr00t_lerobot.schema import (
 from starVLA.dataloader.gr00t_lerobot.transform import ComposedModalityTransform
 
 from functools import partial
-from staVLA.model.tools import make_change_heatmap
+from starVLA.model.tools import make_change_heatmap
 from typing import Tuple, List
 import pickle
+
+def pil_to_np(img):
+    return np.array(img.convert("RGB"))
+
+def np_to_pil(arr):
+    return Image.fromarray(arr.astype(np.uint8))
 
 # LeRobot v2.0 dataset file names 
 LE_ROBOT_MODALITY_FILENAME = "meta/modality.json"
@@ -1679,12 +1685,14 @@ class LeRobotMixtureDataset(Dataset):
                         wrist_views.append(image)
                 # all_images = prim_images + wrist_views
                 # all_pre_images = prim_pre_images + wrist_pre_views
+                new_images = []
                 for i in range(len(prim_pre_images)):
                     curr_img = pil_to_np(prim_images[i])
                     prev_img = pil_to_np(prim_pre_images[i])
                     heat = make_change_heatmap(curr_img, prev_img)
                     heat_pil = np_to_pil(heat)
-                    new_images.append([prim_images, heat_pil])
+                    new_images.append(prim_images[i])
+                    new_images.append(heat_pil)
                 all_images = new_images + wrist_views
                 # Get language and action data
                 language = data[dataset.modality_keys["language"][0]][0]
@@ -1713,7 +1721,7 @@ class LeRobotMixtureDataset(Dataset):
                     # prim_images
                     return dict(action=action, image=all_images, lang=language, state=state)
 
-                return dict(action=action, last_action=last_action,image=[all_images, all_pre_images], lang=language)
+                return dict(action=action, last_action=last_action,image=all_images, lang=language)
                 
             except Exception as e:
                 last_exception = e

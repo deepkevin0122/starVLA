@@ -187,10 +187,8 @@ def make_change_heatmap(
     # ---------------------------
     p = np.percentile(diff, 98)   # top 2%
     thr = 0.9 * p
-    if max_val < 1e-6:
+    if p < 1e-6:
         return np.zeros_like(curr_img)
-
-    thr = max_ratio * max_val
     seed = (diff >= thr).astype(np.uint8)
 
     # ---------------------------

@@ -40,6 +40,8 @@ from starVLA.model.framework import build_framework
 from starVLA.training.trainer_utils.trainer_tools import TrainerUtils
 from starVLA.training.trainer_utils.trainer_tools import build_param_lr_groups
 from starVLA.training.trainer_utils.config_tracker import wrap_config, AccessTrackedConfig
+from PIL import Image
+
 
 deepspeed_plugin = DeepSpeedPlugin()
 accelerator = Accelerator(deepspeed_plugin=deepspeed_plugin)
@@ -283,6 +285,69 @@ class VLAMTrainer(TrainerUtils):
 
         return batch_vla, batch_vlm
 
+    def save_batch_vla(self, batch_vla, output_dir, step):
+        """
+        Save a single batch (batch size = 1) for debugging / visualization.
+
+        Args:
+            batch_vla (dict):
+                {
+                    "action": Tensor or ndarray,
+                    "last_action": Tensor or ndarray,
+                    "image": List[PIL.Image],
+                    "lang": str
+                }
+            output_dir (str): base directory
+            step (int): global step
+        """
+
+        # ---------- 1. 创建目录 ----------
+        print(len(batch_vla))
+        batch_vla = batch_vla[0]
+        save_dir = os.path.join(output_dir, f"step_{step:06d}")
+        img_dir = os.path.join(save_dir, "images")
+        os.makedirs(img_dir, exist_ok=True)
+
+        # ---------- 2. 解析 batch ----------
+        images = batch_vla["image"]
+        action = batch_vla["action"]
+        last_action = batch_vla.get("last_action", None)
+        language = batch_vla.get("lang", "")
+
+        # ---------- 3. 保存图片 ----------
+        for i, img in enumerate(images):
+            if isinstance(img, Image.Image):
+                img.save(os.path.join(img_dir, f"img_{i:02d}.png"))
+            else:
+                raise TypeError(f"Image {i} is not PIL.Image")
+
+        # ---------- 4. 保存 action ----------
+        # Tensor → numpy
+        if hasattr(action, "detach"):
+            action_np = action.detach().cpu().numpy()
+        else:
+            action_np = np.array(action)
+
+        np.save(os.path.join(save_dir, "action.npy"), action_np)
+
+        if last_action is not None:
+            if hasattr(last_action, "detach"):
+                last_action = last_action.detach().cpu().numpy()
+            np.save(os.path.join(save_dir, "last_action.npy"), last_action)
+
+        # ---------- 5. 保存语言与元信息 ----------
+        meta = {
+            "language": language,
+            "num_images": len(images),
+            "step": step,
+        }
+
+        with open(os.path.join(save_dir, "meta.json"), "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2, ensure_ascii=False)
+
+        print(f"[✓] Saved batch to {save_dir}")
+
+
     def train(self):
         """execute training loop"""
         # print training config
@@ -301,10 +366,14 @@ class VLAMTrainer(TrainerUtils):
             # get data batch
             t_start_data = time.perf_counter()
             batch_vla, batch_vlm = self._get_next_batch()
+            self.save_batch_vla(batch_vla, "/project/vonneumann1/zxr/runs/debug", self.completed_steps)
             t_end_data = time.perf_counter()
+            self.completed_steps += 1  # **ADDED**
+            continue # to next step **ADDED**
             # execute training step
             t_start_model = time.perf_counter()
-            step_metrics = self._train_step(batch_vla, batch_vlm)
+            # step_metrics = self._train_step(batch_vla, batch_vlm)  **MODIFIED**
+            
             t_end_model = time.perf_counter()
             # update progress
             if self.accelerator.sync_gradients:
