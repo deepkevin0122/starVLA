@@ -87,7 +87,7 @@ def prepare_data(cfg, accelerator, output_dir) -> Tuple[DataLoader, DataLoader]:
     accelerator.dataloader_config.dispatch_batches = False
     dist.barrier()
 
-    return vla_train_dataloader, vlm_train_dataloader
+    return vla_train_dataloader, vlm_train_dataloader   
 
 
 def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler._LRScheduler]:

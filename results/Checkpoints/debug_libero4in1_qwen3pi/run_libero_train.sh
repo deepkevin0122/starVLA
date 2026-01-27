@@ -3,10 +3,10 @@
 eval "$(conda shell.bash hook)"
 conda activate starVLA
 
-export NCCL_SOCKET_IFNAME=bond0
-export NCCL_IB_HCA=mlx5_2,mlx5_3
-# export NCCL_SOCKET_IFNAME=eth0
-# export NCCL_IB_DISABLE=1
+# export NCCL_SOCKET_IFNAME=bond0
+# export NCCL_IB_HCA=mlx5_2,mlx5_3
+export NCCL_SOCKET_IFNAME=eth0
+export NCCL_IB_DISABLE=1
 
 # used for check save when communication
 export NCCL_BLOCKING_WAIT=1
@@ -22,12 +22,11 @@ config_yaml=./examples/LIBERO/train_files/starvla_cotrain_libero.yaml
 libero_data_root=playground/Datasets/LEROBOT_LIBERO_DATA
 data_mix=libero_all
 run_root_dir=./results/Checkpoints
-run_id=libero4in1_Qwen3GR00T
+run_id=debug_libero4in1_qwen3pi
 # === End of environment variable configuration ===
 ###########################################################################################
 
-export WANDB_API_KEY=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
-wandb login 
+
 export WANDB_MODE=disabled
 
 output_dir=${run_root_dir}/${run_id}
@@ -38,7 +37,7 @@ cp $0 ${output_dir}/
 
 accelerate launch \
   --config_file starVLA/config/deepseeds/deepspeed_zero2.yaml \
-  --num_processes 16 \
+  --num_processes 1 \
   starVLA/training/train_starvla_cotrain.py \
   --config_yaml ${config_yaml} \
   --framework.name ${Framework_name} \
@@ -55,7 +54,7 @@ accelerate launch \
   --run_root_dir ${run_root_dir} \
   --run_id ${run_id} \
   --wandb_project starVLA_Libero \
-  --wandb_entity deepkevin0122 \
+  --wandb_entity jinhuiye \
   # --is_debug True
 
 
