@@ -49,6 +49,7 @@ from starVLA.dataloader.gr00t_lerobot.schema import (
 from starVLA.dataloader.gr00t_lerobot.transform import ComposedModalityTransform
 
 from functools import partial
+from staVLA.model.tools import make_change_heatmap
 from typing import Tuple, List
 import pickle
 
@@ -1663,32 +1664,39 @@ class LeRobotMixtureDataset(Dataset):
                 prim_images = []
                 wrist_views = []
                 prim_pre_images = []
-                wrist_pre_views = []
                 for video_key in dataset.modality_keys["video"]:
                     image = data[video_key][0]
-                    image_pre = None if data_pre is None else data_pre[video_key][0]
+                    image_pre = None if step == 0 else data_pre[video_key][0]
                     # Apply image cropping if enabled and the video key is base_view
                     # Note: crop_obs_camera functionality has been removed
                     image = Image.fromarray(image).resize((224, 224))
-                    image_pre = None if image_pre is None else Image.fromarray(image_pre).resize((224, 224))
+                    image_pre = None if step == 0 else Image.fromarray(image_pre).resize((224, 224))
                     if "wrist" not in video_key:
                         prim_images.append(image)
-                        if image_pre is not None:
+                        if step != 0:
                             prim_pre_images.append(image_pre)
                     else:
                         wrist_views.append(image)
-                        if image_pre is not None:
-                            wrist_pre_views.append(image_pre)
-                all_images = prim_images + wrist_views
-                all_pre_images = prim_pre_images + wrist_pre_views
-
+                # all_images = prim_images + wrist_views
+                # all_pre_images = prim_pre_images + wrist_pre_views
+                for i in range(len(prim_pre_images)):
+                    curr_img = pil_to_np(prim_images[i])
+                    prev_img = pil_to_np(prim_pre_images[i])
+                    heat = make_change_heatmap(curr_img, prev_img)
+                    heat_pil = np_to_pil(heat)
+                    new_images.append([prim_images, heat_pil])
+                all_images = new_images + wrist_views
                 # Get language and action data
                 language = data[dataset.modality_keys["language"][0]][0]
                 action = []
+                last_action = []
                 for action_key in dataset.modality_keys["action"]:
                     action.append(data[action_key])
+                    if step != 0:
+                        last_action.append(data_pre[action_key])
                 action = np.concatenate(action, axis=1).astype(np.float16)
-
+                if step != 0:
+                    last_action = np.concatenate(last_action, axis=1).astype(np.float16)
                 # state = []
                 # for state_key in dataset.modality_keys["state"]:
                 #    state.append(data[state_key])
@@ -1705,7 +1713,7 @@ class LeRobotMixtureDataset(Dataset):
                     # prim_images
                     return dict(action=action, image=all_images, lang=language, state=state)
 
-                return dict(action=action, image=[all_images, all_pre_images], lang=language)
+                return dict(action=action, last_action=last_action,image=[all_images, all_pre_images], lang=language)
                 
             except Exception as e:
                 last_exception = e

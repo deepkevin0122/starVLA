@@ -103,18 +103,7 @@ class Qwen_GR00TD(baseframework):
         
 
         # Step 1: QWenVL input format
-        new_images = []
-        for i in batch_images:
-            curr_views = i[0]
-            last_views = i[1]
-            curr_img = pil_to_np(curr_views[0])
-            prev_img = pil_to_np(last_views[0])
-
-            heat = make_change_heatmap(curr_img, prev_img)
-
-            heat_pil = np_to_pil(heat)
-            new_images.append([curr_views, heat_pil])
-        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=new_images, instructions=instructions)
+        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             qwenvl_outputs = self.qwen_vl_interface(
                 **qwen_inputs,
