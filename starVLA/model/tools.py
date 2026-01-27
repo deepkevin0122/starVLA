@@ -141,6 +141,100 @@ class Registry:
         return {k: v for k, v in self._registry.items()}
 
 FRAMEWORK_REGISTRY = Registry("frameworks")
+import numpy as np
+import cv2
+from PIL import Image
+
+
+def remove_small_components(mask, min_area=30):
+    """
+    去除小连通块（噪点）
+    """
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    clean = np.zeros_like(mask, dtype=np.uint8)
+    for i in range(1, num_labels):  # 0 是背景
+        if stats[i, cv2.CC_STAT_AREA] >= min_area:
+            clean[labels == i] = 1
+    return clean
+
+
+def make_change_heatmap(
+    curr_img: np.ndarray,    # H,W,3 uint8
+    prev_img: np.ndarray,    # H,W,3 uint8
+    max_ratio: float = 0.9,  # 使用 max 的 90%
+    min_area: int = 40,      # 最小连通区域
+    diamond_radius: int = 3, # 扩散半径
+):
+    """
+    生成变化热力图（轮廓 + 扩散）
+    返回：RGB heatmap（uint8）
+    """
+
+    # ---------------------------
+    # 1. 计算差分（灰度）
+    # ---------------------------
+    curr = curr_img.astype(np.int16)
+    prev = prev_img.astype(np.int16)
+    diff = np.abs(curr - prev).mean(axis=2).astype(np.float32)
+
+    # ---------------------------
+    # 2. 平滑（去噪）
+    # ---------------------------
+    diff = cv2.GaussianBlur(diff, (3, 3), 0)
+
+    # ---------------------------
+    # 3. 阈值（max 的 90%）
+    # ---------------------------
+    p = np.percentile(diff, 98)   # top 2%
+    thr = 0.9 * p
+    if max_val < 1e-6:
+        return np.zeros_like(curr_img)
+
+    thr = max_ratio * max_val
+    seed = (diff >= thr).astype(np.uint8)
+
+    # ---------------------------
+    # 4. 去孤立噪点
+    # ---------------------------
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    seed = cv2.morphologyEx(seed, cv2.MORPH_OPEN, kernel, iterations=1)
+    seed = remove_small_components(seed, min_area=min_area)
+
+    if seed.sum() == 0:
+        return np.zeros_like(curr_img)
+
+    # ---------------------------
+    # 5. 菱形扩散（视觉扩散模拟）
+    # ---------------------------
+    r = diamond_radius
+    diamond = np.zeros((2*r+1, 2*r+1), dtype=np.uint8)
+    for i in range(2*r+1):
+        for j in range(2*r+1):
+            if abs(i - r) + abs(j - r) <= r:
+                diamond[i, j] = 1
+
+    expanded = cv2.dilate(seed, diamond, iterations=1)
+
+    # ---------------------------
+    # 6. 提取边缘（轮廓）
+    # ---------------------------
+    eroded = cv2.erode(expanded, np.ones((3,3), np.uint8), iterations=1)
+    edge = expanded - eroded
+
+    # ---------------------------
+    # 7. 生成热力图（RGB）
+    # ---------------------------
+    heatmap = np.zeros_like(curr_img, dtype=np.uint8)
+
+    # 填充区域（暗红）
+    heatmap[expanded.astype(bool), 2] = 160
+
+    # 边缘（亮红）
+    heatmap[edge.astype(bool), 2] = 255
+    heatmap[edge.astype(bool), 1] = 80
+
+    return heatmap
+
 
 
 

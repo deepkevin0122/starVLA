@@ -1638,7 +1638,7 @@ class LeRobotMixtureDataset(Dataset):
             index (int): The index of the trajectory to get.
 
         Returns:
-            dict: The data for the trajectory and start index.
+            dict: The data for the trajectory and start index.(including last and current images)
         """
         max_retries = 10
         last_exception = None
@@ -1655,22 +1655,33 @@ class LeRobotMixtureDataset(Dataset):
                     
                     
                 data = dataset.transforms(dataset.get_step_data(trajectory_name, step))
-                
+                if step == 0:
+                    data_pre = None
+                else:
+                    data_pre = dataset.transforms(dataset.get_step_data(trajectory_name, step))
                 # Process all video keys dynamically
                 prim_images = []
                 wrist_views = []
+                prim_pre_images = []
+                wrist_pre_views = []
                 for video_key in dataset.modality_keys["video"]:
                     image = data[video_key][0]
-                    
+                    image_pre = None if data_pre is None else data_pre[video_key][0]
                     # Apply image cropping if enabled and the video key is base_view
                     # Note: crop_obs_camera functionality has been removed
                     image = Image.fromarray(image).resize((224, 224))
+                    image_pre = None if image_pre is None else Image.fromarray(image_pre).resize((224, 224))
                     if "wrist" not in video_key:
                         prim_images.append(image)
+                        if image_pre is not None:
+                            prim_pre_images.append(image_pre)
                     else:
                         wrist_views.append(image)
+                        if image_pre is not None:
+                            wrist_pre_views.append(image_pre)
                 all_images = prim_images + wrist_views
-                
+                all_pre_images = prim_pre_images + wrist_pre_views
+
                 # Get language and action data
                 language = data[dataset.modality_keys["language"][0]][0]
                 action = []
@@ -1678,10 +1689,10 @@ class LeRobotMixtureDataset(Dataset):
                     action.append(data[action_key])
                 action = np.concatenate(action, axis=1).astype(np.float16)
 
-                state = []
-                for state_key in dataset.modality_keys["state"]:
-                    state.append(data[state_key])
-                state = np.concatenate(state, axis=1).astype(np.float16)
+                # state = []
+                # for state_key in dataset.modality_keys["state"]:
+                #    state.append(data[state_key])
+                #state = np.concatenate(state, axis=1).astype(np.float16)
                 
                 state = None
                 
@@ -1694,7 +1705,7 @@ class LeRobotMixtureDataset(Dataset):
                     # prim_images
                     return dict(action=action, image=all_images, lang=language, state=state)
 
-                return dict(action=action, image=all_images, lang=language)
+                return dict(action=action, image=[all_images, all_pre_images], lang=language)
                 
             except Exception as e:
                 last_exception = e
