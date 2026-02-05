@@ -23,6 +23,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from PIL import Image
+import os
 
 
 
@@ -39,6 +40,8 @@ from starVLA.model.modules.vlm import get_vlm_model
 from starVLA.model.modules.action_model.GR00T_ActionHeader import get_action_model, FlowmatchingActionHead
 from starVLA.training.trainer_utils.trainer_tools import resize_images
 from starVLA.model.tools import FRAMEWORK_REGISTRY
+from starVLA.model.MemoryMap import MemoryMap
+from starVLA.model.tools import build_change_flow_map, _calculate_update_positions
 
 
 @FRAMEWORK_REGISTRY.register("QwenGR00TD")
@@ -78,7 +81,29 @@ class Qwen_GR00TD(baseframework):
         self.future_action_window_size = config.framework.action_model.future_action_window_size
         self.past_action_window_size = config.framework.action_model.past_action_window_size
         self.chunk_len = self.past_action_window_size + 1 + self.future_action_window_size
-        
+        self.map_x = self.config.framework.action_model.get("memory_map_x_size", 4)
+        self.map_y = self.config.framework.action_model.get("memory_map_y_size", 4) 
+        self.memory_update_topk = self.config.framework.action_model.get("memory_update_topk", 4)
+        self.memory = MemoryMap(
+            map_x=self.map_x,
+            map_y=self.map_y,
+            memory_dim=self.qwen_vl_interface.model.config.hidden_size,
+            update_rate=self.config.framework.action_model.get("memory_update_rate", 0.5),
+            drop_rate=self.config.framework.action_model.get("memory_dropout", 0.1),
+            gnn_update_rate=self.config.framework.action_model.get("memory_gnn_update_rate", 0.05),
+            persistence_path = os.path.join(self.config.output_dir, "memory"),
+            auto_save = True,
+            dtype=torch.float32
+        )
+        self.image_size = (224, 224)  # default image size
+        self.linear_action_pred = nn.Linear(
+            self.qwen_vl_interface.model.config.hidden_size * 2,
+            self.config.framework.action_model.get("action_dim", 7)
+        )
+
+    import numpy as np
+    import cv2
+    from typing import List, Tuple, Union, Any
 
     def forward(
         self,
@@ -89,49 +114,63 @@ class Qwen_GR00TD(baseframework):
 
         """
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
+        batch_las_images = [example["las_image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
+        action_keys = [example["action_keys"] for example in examples] # [B, str]
+        batch_las_action = [example["las_action"] for example in examples] # [B, len, 7]
         actions = [example["action"] for example in examples]  # label [B， len, 7]
-        
-        state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
-        
-
-        # Step 1: QWenVL input format
-        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
+        # Step 1: Build Change Map and FlowMap
+        batch_change_map, batch_flow_map, batch_hsv_map = build_change_flow_map(batch_images, batch_las_images)
+        # Calculate Memory Map Update Positions based on HSV brightness
+        upd_poss = _calculate_update_positions(batch_hsv_map, self.map_x, self.map_y, self.image_size, self.memory_update_topk)
+        # Step 2: QWenVL Inputs
+        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs_pro(
+            images=batch_images, 
+            action_keys=action_keys, 
+            change_maps=batch_change_map,
+            flow_maps=batch_flow_map,
+            instructions=instructions
+        )
         with torch.autocast("cuda", dtype=torch.bfloat16):
+            # Step 3: Forward QwenVL
             qwenvl_outputs = self.qwen_vl_interface(
                 **qwen_inputs,
                 output_attentions=False,
                 output_hidden_states=True,
                 return_dict=True,
             )
-            # last_hidden_state: [B, seq_len, H]
-            last_hidden = qwenvl_outputs.hidden_states[-1]   # [B, L, H]
+            last_hidden = qwenvl_outputs.hidden_states[-1]
 
-        # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):
-            actions = torch.tensor(
-                np.array(actions), device=last_hidden.device, dtype=last_hidden.dtype
-            )  # [B, T_full, action_dim]
-            actions_target = actions[:, -(self.future_action_window_size+1):, :]  # (B, chunk_len, action_dim)
+            calc_hidden = last_hidden.mean(dim=1).float()
+            memory = self.memory(
+                ext=calc_hidden,
+                upd_poss=upd_poss,
+                update=True
+            ).to(device=last_hidden.device, dtype=torch.float32)
+
+            batch_las_action = torch.tensor(np.array(batch_las_action), device=last_hidden.device, dtype=torch.float32)
+            batch_las_action = batch_las_action[:, -(self.future_action_window_size+1), :] 
+
+            concat_feat = torch.cat([calc_hidden, memory], dim=-1) 
+            las_action_pred = self.linear_action_pred(concat_feat) 
+            las_action_loss = F.l1_loss(las_action_pred, batch_las_action).float()
+
+            last_hidden = torch.cat([last_hidden, memory.unsqueeze(1).to(dtype=last_hidden.dtype)], dim=1)
+            actions = torch.tensor(np.array(actions), device=last_hidden.device, dtype=last_hidden.dtype)
+            actions_target = actions[:, -(self.future_action_window_size+1):, :]
 
             repeated_diffusion_steps = (
                 self.config.trainer.get("repeated_diffusion_steps", 4) if self.config and self.config.trainer else 4
             )
             actions_target_repeated = actions_target.repeat(repeated_diffusion_steps, 1, 1)
             last_hidden_repeated = last_hidden.repeat(repeated_diffusion_steps, 1, 1)
-            
             state_repeated = None
-            if state is not None:
-                state = torch.tensor(
-                    np.array(state), device=last_hidden.device, dtype=last_hidden.dtype
-                )
-                state_repeated = state.repeat(repeated_diffusion_steps, 1, 1)
 
-            action_loss = self.action_model(last_hidden_repeated, actions_target_repeated, state_repeated)  # (B, chunk_len, action_dim)
+            action_loss = self.action_model(last_hidden_repeated, actions_target_repeated, state_repeated)
 
-
-
-        return {"action_loss": action_loss}
+        # Step 7: Return Losses
+        return {"action_loss": action_loss, "las_action_loss": las_action_loss}
 
     @torch.inference_mode()
     def predict_action(
@@ -150,36 +189,44 @@ class Qwen_GR00TD(baseframework):
         """
         if type(examples) is not list:
             examples = [examples]
-        batch_images = [to_pil_preserve(example["image"]) for example in examples]  #  [B，[PLT]]
+        batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
+        batch_las_images = [example["las_image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
-    
-        state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
-        
-        train_obs_image_size = getattr(self.config.datasets.vla_data, "image_size", None)
-        if train_obs_image_size:
-            batch_images = resize_images(batch_images, target_size=train_obs_image_size)
+        action_keys = [example["action_keys"] for example in examples] # [B, str]
     
         # Step 1: QWenVL input format
 
                 
-        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
+        batch_change_map, batch_flow_map, batch_hsv_map = build_change_flow_map(batch_images, batch_las_images)
+        # Calculate Memory Map Update Positions based on HSV brightness
+        upd_poss = _calculate_update_positions(batch_hsv_map, self.map_x, self.map_y, self.image_size, self.memory_update_topk)
+        # Step 2: QWenVL Inputs
+        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs_pro(
+            images=batch_images, 
+            action_keys=action_keys, 
+            change_maps=batch_change_map,
+            flow_maps=batch_flow_map,
+            instructions=instructions
+        )
         with torch.autocast("cuda", dtype=torch.bfloat16):
+            # Step 3: Forward QwenVL
             qwenvl_outputs = self.qwen_vl_interface(
                 **qwen_inputs,
                 output_attentions=False,
                 output_hidden_states=True,
                 return_dict=True,
             )
-
-            # last_hidden_state: [B, seq_len, H]
-            last_hidden = qwenvl_outputs.hidden_states[-1]   # [B, L, H]
-
-        state = torch.from_numpy(np.array(state)).to(last_hidden.device, dtype=last_hidden.dtype) if state is not None else None
-        
-        # Step 4: Action Expert Forward
+            last_hidden = qwenvl_outputs.hidden_states[-1]
+            calc_hidden = last_hidden.mean(dim=1).float()
+            memory = self.memory(
+                ext=calc_hidden, 
+                upd_poss=upd_poss,
+                update=False
+            ).to(device=last_hidden.device, dtype=torch.float32)
+            last_hidden = torch.cat([last_hidden, memory.unsqueeze(1).to(dtype=last_hidden.dtype)], dim=1)
+        state = None
         with torch.autocast("cuda", dtype=torch.float32):
             pred_actions = self.action_model.predict_action(last_hidden, state)  # (B, chunk_len, action_dim)
-
         normalized_actions = pred_actions.detach().cpu().numpy()
         return {"normalized_actions": normalized_actions}
 

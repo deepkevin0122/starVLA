@@ -24,6 +24,7 @@ In this file, we define 3 types of datasets:
 See `scripts/load_dataset.py` for examples on how to use these datasets.
 """
 import os
+import copy
 import hashlib
 import json, torch
 from collections import defaultdict
@@ -49,7 +50,6 @@ from starVLA.dataloader.gr00t_lerobot.schema import (
 from starVLA.dataloader.gr00t_lerobot.transform import ComposedModalityTransform
 
 from functools import partial
-from starVLA.model.tools import make_change_heatmap
 from typing import Tuple, List
 import pickle
 
@@ -1662,56 +1662,52 @@ class LeRobotMixtureDataset(Dataset):
                     
                     
                 data = dataset.transforms(dataset.get_step_data(trajectory_name, step))
-                if step == 0:
-                    data_pre = None
+                step_gap = 1
+                if step < step_gap:
+                    data_pre = data
                 else:
-                    data_pre = dataset.transforms(dataset.get_step_data(trajectory_name, step))
+                    data_pre = dataset.transforms(dataset.get_step_data(trajectory_name, step - step_gap))
                 # Process all video keys dynamically
                 prim_images = []
+                prim_las_images = []
                 wrist_views = []
-                prim_pre_images = []
+                wrist_las_views = []
                 for video_key in dataset.modality_keys["video"]:
                     image = data[video_key][0]
-                    image_pre = None if step == 0 else data_pre[video_key][0]
-                    # Apply image cropping if enabled and the video key is base_view
-                    # Note: crop_obs_camera functionality has been removed
                     image = Image.fromarray(image).resize((224, 224))
-                    image_pre = None if step == 0 else Image.fromarray(image_pre).resize((224, 224))
+                    image_las = Image.fromarray(data_pre[video_key][0]).resize((224, 224))
                     if "wrist" not in video_key:
                         prim_images.append(image)
-                        if step != 0:
-                            prim_pre_images.append(image_pre)
+                        prim_las_images.append(image_las)
                     else:
                         wrist_views.append(image)
-                # all_images = prim_images + wrist_views
-                # all_pre_images = prim_pre_images + wrist_pre_views
-                new_images = []
-                for i in range(len(prim_pre_images)):
-                    curr_img = pil_to_np(prim_images[i])
-                    prev_img = pil_to_np(prim_pre_images[i])
-                    heat = make_change_heatmap(curr_img, prev_img)
-                    heat_pil = np_to_pil(heat)
-                    new_images.append(prim_images[i])
-                    new_images.append(heat_pil)
-                all_images = new_images + wrist_views
+                        wrist_las_views.append(image_las)
+                all_images = prim_images + wrist_views
+                all_las_images = prim_las_images + wrist_las_views
                 # Get language and action data
                 language = data[dataset.modality_keys["language"][0]][0]
                 action = []
-                last_action = []
+                las_action = []
+                action_keys = []
                 for action_key in dataset.modality_keys["action"]:
                     action.append(data[action_key])
-                    if step != 0:
-                        last_action.append(data_pre[action_key])
+                    if step < step_gap:
+                        las_action.append(np.zeros_like(data[action_key]))
+                        las_action[-1][-1]=data[action_key][-1]
+                    else:
+                        las_action.append(data_pre[action_key])
+                    action_keys.append(action_key)
+                action_keys = ", ".join(action_keys)
                 action = np.concatenate(action, axis=1).astype(np.float16)
-                if step != 0:
-                    last_action = np.concatenate(last_action, axis=1).astype(np.float16)
-                # state = []
-                # for state_key in dataset.modality_keys["state"]:
-                #    state.append(data[state_key])
-                #state = np.concatenate(state, axis=1).astype(np.float16)
-                
+                las_action = np.concatenate(las_action, axis=1).astype(np.float16)
+                """
+                 state = []
+                 for state_key in dataset.modality_keys["state"]:
+                    state.append(data[state_key])
+                state = np.concatenate(state, axis=1).astype(np.float16)
+                """
                 state = None
-                
+                """
                 if self.data_cfg is not None and self.data_cfg.get("include_state", False) not in ["False", False]:
                     
                     state = []
@@ -1720,8 +1716,8 @@ class LeRobotMixtureDataset(Dataset):
                     state = np.concatenate(state, axis=1).astype(np.float16)
                     # prim_images
                     return dict(action=action, image=all_images, lang=language, state=state)
-
-                return dict(action=action, last_action=last_action,image=all_images, lang=language)
+                """
+                return dict(action=action, las_action=las_action, action_keys=action_keys, image=all_images, las_image=all_las_images,lang=language)
                 
             except Exception as e:
                 last_exception = e

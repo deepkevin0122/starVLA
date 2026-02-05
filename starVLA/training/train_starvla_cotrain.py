@@ -209,7 +209,9 @@ class VLAMTrainer(TrainerUtils):
         """save current training state"""
 
         if self.accelerator.is_main_process:
-
+            self.model.memory().save_memory_map(
+                suffix=f"steps_{self.completed_steps}"
+            )
             checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
             # save model state
             state_dict = self.accelerator.get_state_dict(self.model)
@@ -366,14 +368,14 @@ class VLAMTrainer(TrainerUtils):
             # get data batch
             t_start_data = time.perf_counter()
             batch_vla, batch_vlm = self._get_next_batch()
-            self.save_batch_vla(batch_vla, "/project/vonneumann1/zxr/runs/debug", self.completed_steps)
+            if self.completed_steps % 10 == 0:
+                self.save_batch_vla(batch_vla, "/dataset/vkevinzhao/code/starVLA/debug/start/", self.completed_steps)
             t_end_data = time.perf_counter()
-            self.completed_steps += 1  # **ADDED**
-            continue # to next step **ADDED**
+            # self.completed_steps += 1 
+            # continue 
             # execute training step
             t_start_model = time.perf_counter()
-            # step_metrics = self._train_step(batch_vla, batch_vlm)  **MODIFIED**
-            
+            step_metrics = self._train_step(batch_vla, batch_vlm)
             t_end_model = time.perf_counter()
             # update progress
             if self.accelerator.sync_gradients:
@@ -465,20 +467,17 @@ class VLAMTrainer(TrainerUtils):
             # VLA task forward propagation
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
-                action_loss = output_dict["action_loss"]
+                action_loss = output_dict["action_loss"] # to be modified
                 total_loss = action_loss * self.config.trainer.loss_scale.vla
-            # self.accelerator.backward(total_loss)
-
-            
+            if self.config.trainer.loss_scale.vla > 0.0:
+                self.accelerator.backward(total_loss)
             pass
             # VLM task forward propagation
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 vlm_output = self.model.qwen_vl_interface(**batch_vlm)
                 vlm_loss = vlm_output.loss * self.config.trainer.loss_scale.vlm
-                if self.config.trainer.loss_scale.vlm > 0.0:
-                    total_loss += vlm_loss
-            self.accelerator.backward(total_loss)
-            # self.accelerator.backward(vlm_loss)
+            if self.config.trainer.loss_scale.vlm > 0.0:
+                self.accelerator.backward(vlm_loss)
 
             pass
 

@@ -145,95 +145,237 @@ import numpy as np
 import cv2
 from PIL import Image
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import List, Tuple, Optional
 
-def remove_small_components(mask, min_area=30):
+def _to_uint8_hwc3(img: Any) -> np.ndarray:
     """
-    去除小连通块（噪点）
+    Convert various image formats into HxWx3 uint8.
+    Accepts:
+    - np.ndarray (H,W,3) uint8/float
+    - torch.Tensor (C,H,W) or (H,W,C) etc. (if torch is installed; handled by duck-typing)
     """
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    clean = np.zeros_like(mask, dtype=np.uint8)
-    for i in range(1, num_labels):  # 0 是背景
-        if stats[i, cv2.CC_STAT_AREA] >= min_area:
-            clean[labels == i] = 1
-    return clean
+    # torch tensor -> numpy
+    if hasattr(img, "detach") and hasattr(img, "cpu") and hasattr(img, "numpy"):
+        img = img.detach().cpu().numpy()
+
+    img = np.asarray(img)
+
+    # If CHW, convert to HWC
+    if img.ndim == 3 and img.shape[0] in (1, 3) and img.shape[-1] not in (1, 3):
+        img = np.transpose(img, (1, 2, 0))
+
+    # If grayscale, expand to 3 channels
+    if img.ndim == 2:
+        img = np.stack([img, img, img], axis=-1)
+
+    if img.ndim != 3 or img.shape[2] not in (3, 4):
+        raise ValueError(f"Expected HxWx3/4 or HxW, got shape={img.shape}")
+
+    # Drop alpha if exists
+    if img.shape[2] == 4:
+        img = img[:, :, :3]
+
+    # Normalize to uint8
+    if img.dtype != np.uint8:
+        # If in [0,1] float, scale; otherwise clip directly
+        if np.issubdtype(img.dtype, np.floating):
+            if img.max() <= 1.5:
+                img = (img * 255.0).round()
+        img = np.clip(img, 0, 255).astype(np.uint8)
+
+    return img
 
 
-def make_change_heatmap(
-    curr_img: np.ndarray,    # H,W,3 uint8
-    prev_img: np.ndarray,    # H,W,3 uint8
-    max_ratio: float = 0.9,  # 使用 max 的 90%
-    min_area: int = 40,      # 最小连通区域
-    diamond_radius: int = 3, # 扩散半径
-):
+def _compute_change_map(
+    curr_bgr: np.ndarray,
+    prev_bgr: np.ndarray,
+    top_ratio: float = 0.30,
+    blur_ksize: int = 5,
+    morph_open: bool = True,
+    morph_ksize: int = 3,
+) -> np.ndarray:
     """
-    生成变化热力图（轮廓 + 扩散）
-    返回：RGB heatmap（uint8）
+    Returns: change_map (H,W) uint8 in {0,255}
     """
+    # grayscale diff
+    curr_g = cv2.cvtColor(curr_bgr, cv2.COLOR_BGR2GRAY)
+    prev_g = cv2.cvtColor(prev_bgr, cv2.COLOR_BGR2GRAY)
+    diff = cv2.absdiff(curr_g, prev_g).astype(np.float32)
 
-    # ---------------------------
-    # 1. 计算差分（灰度）
-    # ---------------------------
-    curr = curr_img.astype(np.int16)
-    prev = prev_img.astype(np.int16)
-    diff = np.abs(curr - prev).mean(axis=2).astype(np.float32)
+    # smooth
+    k = blur_ksize if blur_ksize % 2 == 1 else blur_ksize + 1
+    if k >= 3:
+        diff = cv2.GaussianBlur(diff, (k, k), 0)
 
-    # ---------------------------
-    # 2. 平滑（去噪）
-    # ---------------------------
-    diff = cv2.GaussianBlur(diff, (3, 3), 0)
+    # pick top 30% pixels by value (threshold at 70th percentile)
+    # handle edge cases
+    flat = diff.reshape(-1)
+    if flat.size == 0:
+        return np.zeros_like(curr_g, dtype=np.uint8)
 
-    # ---------------------------
-    # 3. 阈值（max 的 90%）
-    # ---------------------------
-    p = np.percentile(diff, 98)   # top 2%
-    thr = 0.9 * p
-    if p < 1e-6:
-        return np.zeros_like(curr_img)
-    seed = (diff >= thr).astype(np.uint8)
+    thr = np.percentile(flat, 100.0 * (1.0 - top_ratio))
+    if thr < 2.0:
+        return np.zeros_like(curr_g, dtype=np.uint8)
+    mask = (diff >= thr).astype(np.uint8) * 255
 
-    # ---------------------------
-    # 4. 去孤立噪点
-    # ---------------------------
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    seed = cv2.morphologyEx(seed, cv2.MORPH_OPEN, kernel, iterations=1)
-    seed = remove_small_components(seed, min_area=min_area)
+    # optional denoise
+    if morph_open:
+        mk = morph_ksize if morph_ksize % 2 == 1 else morph_ksize + 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (mk, mk))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
 
-    if seed.sum() == 0:
-        return np.zeros_like(curr_img)
-
-    # ---------------------------
-    # 5. 菱形扩散（视觉扩散模拟）
-    # ---------------------------
-    r = diamond_radius
-    diamond = np.zeros((2*r+1, 2*r+1), dtype=np.uint8)
-    for i in range(2*r+1):
-        for j in range(2*r+1):
-            if abs(i - r) + abs(j - r) <= r:
-                diamond[i, j] = 1
-
-    expanded = cv2.dilate(seed, diamond, iterations=1)
-
-    # ---------------------------
-    # 6. 提取边缘（轮廓）
-    # ---------------------------
-    eroded = cv2.erode(expanded, np.ones((3,3), np.uint8), iterations=1)
-    edge = expanded - eroded
-
-    # ---------------------------
-    # 7. 生成热力图（RGB）
-    # ---------------------------
-    heatmap = np.zeros_like(curr_img, dtype=np.uint8)
-
-    # 填充区域（暗红）
-    heatmap[expanded.astype(bool), 2] = 160
-
-    # 边缘（亮红）
-    heatmap[edge.astype(bool), 2] = 255
-    heatmap[edge.astype(bool), 1] = 80
-
-    return heatmap
+    return mask
 
 
+def _compute_flow_map(
+    curr_bgr: np.ndarray,
+    prev_bgr: np.ndarray,
+    fb_pyr_scale: float = 0.5,
+    fb_levels: int = 3,
+    fb_winsize: int = 15,
+    fb_iterations: int = 3,
+    fb_poly_n: int = 5,
+    fb_poly_sigma: float = 1.2,
+    mag_threshold: float = 0.5,
+) -> (np.ndarray, np.ndarray):
+    """
+    计算并可视化 Farneback 稠密光流。
+    返回:
+        flow_bgr: 用于显示的 BGR 图像
+        hsv: 原始 HSV 格式数据
+    """
+    # 1. 转换为灰度图（确保输入是连续内存）
+    prev_g = cv2.cvtColor(np.ascontiguousarray(prev_bgr), cv2.COLOR_BGR2GRAY)
+    curr_g = cv2.cvtColor(np.ascontiguousarray(curr_bgr), cv2.COLOR_BGR2GRAY)
+
+    # 2. 计算光流 (H, W, 2)
+    flow = cv2.calcOpticalFlowFarneback(
+        prev_g, curr_g, None,
+        pyr_scale=fb_pyr_scale,
+        levels=fb_levels,
+        winsize=fb_winsize,
+        iterations=fb_iterations,
+        poly_n=fb_poly_n,
+        poly_sigma=fb_poly_sigma,
+        flags=0
+    )
+
+    # 3. 笛卡尔坐标转极坐标
+    mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1], angleInDegrees=True)
+
+    # 4. 构建 HSV 可视化矩阵
+    # Hue (色调): 代表运动方向，0-180 对应 OpenCV 的 0-360度
+    # Saturation (饱和度): 恒定 255
+    # Value (亮度): 代表运动幅度
+    h, w = curr_bgr.shape[:2]
+    hsv = np.zeros((h, w, 3), dtype=np.uint8)
+    
+    # 填充 Hue: OpenCV 中 Hue 范围是 [0, 179]
+    hsv[..., 0] = (ang / 2).astype(np.uint8)
+    hsv[..., 1] = 255
+
+    # 5. 幅度归一化处理（处理噪声与离群点）
+    # 过滤掉极小的噪声，防止静止区域出现彩色斑点
+    mag[mag < mag_threshold] = 0
+    
+    m_flat = mag.reshape(-1)
+    if m_flat.size > 0:
+        # 使用 95% 分位数作为亮度上限，比 99% 更平滑，能更好地观察主体运动
+        m_ref = np.percentile(m_flat, 95.0)
+        # 兜底：如果整幅图几乎没动，m_ref 会很小，这里限制最小参考值为 2.0 像素
+        m_ref = max(m_ref, 2.0)
+        
+        val = np.clip(mag / m_ref, 0.0, 1.0) * 255.0
+        hsv[..., 2] = val.astype(np.uint8)
+    else:
+        hsv[..., 2] = 0
+
+    # 6. 转回 BGR 用于显示
+    flow_bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+    return flow_bgr, hsv
+
+
+def build_change_flow_map(
+    batch_images: List[List[Any]],        # [B, [P,L,T]] each view is image-like
+    batch_las_images: List[List[Any]],    # [B, [P,L,T]] previous views
+    top_ratio: float = 0.20,
+    blur_ksize: int = 5,
+    morph_open: bool = True,
+) -> Tuple[List[List[np.ndarray]], List[List[np.ndarray]]]:
+    """
+    Args:
+    batch_images: current views, [B, V]
+    batch_las_images: previous views, [B, V] aligned with batch_images
+    Returns:
+    batch_change_map: [B, V] each is (H,W) uint8 mask {0,255}
+    batch_flow_map:   [B, V] each is (H,W,3) uint8 BGR flow visualization
+    """
+    if len(batch_images) != len(batch_las_images):
+        raise ValueError(f"B mismatch: {len(batch_images)} vs {len(batch_las_images)}")
+
+    batch_change_map: List[List[np.ndarray]] = []
+    batch_flow_map: List[List[np.ndarray]] = []
+    batch_hsv_map: List[List[np.ndarray]] = []
+
+    for b in range(len(batch_images)):
+        views_curr = batch_images[b]
+        views_prev = batch_las_images[b]
+        if len(views_curr) != len(views_prev):
+            raise ValueError(f"View count mismatch at b={b}: {len(views_curr)} vs {len(views_prev)}")
+
+        cmaps_b: List[np.ndarray] = []
+        fmaps_b: List[np.ndarray] = []
+        vmaps_b: List[np.ndarray] = []
+
+        for v in range(len(views_curr)):
+            curr = _to_uint8_hwc3(views_curr[v])
+            prev = _to_uint8_hwc3(views_prev[v])
+
+            # Important: Farnebäck assumes same resolution
+            if curr.shape[:2] != prev.shape[:2]:
+                prev = cv2.resize(prev, (curr.shape[1], curr.shape[0]), interpolation=cv2.INTER_LINEAR)
+
+            # OpenCV default uses BGR; if your arrays are RGB, you can swap here:
+            # curr = curr[..., ::-1]
+            # prev = prev[..., ::-1]
+
+            change_map = _compute_change_map(
+                curr, prev, top_ratio=top_ratio, blur_ksize=blur_ksize,
+                morph_open=morph_open
+            )
+            flow_map, hsv_map = _compute_flow_map(curr, prev)
+
+            cmaps_b.append(change_map)
+            fmaps_b.append(flow_map)
+            vmaps_b.append(hsv_map)
+
+        batch_change_map.append(cmaps_b)
+        batch_flow_map.append(fmaps_b)
+        batch_hsv_map.append(vmaps_b)
+
+    return batch_change_map, batch_flow_map, batch_hsv_map
+
+def _calculate_update_positions(batch_hsv_map, map_x, map_y, image_size, memory_update_topk):
+    upd_poss = []
+    for _ in range(len(batch_hsv_map)):
+        upd_pos = []
+        hsv_map = batch_hsv_map[_][0][:, :, 2]
+        for i in range(map_x):
+            for j in range(map_y):
+                x0 = i * image_size[0] // map_x
+                y0 = j * image_size[1] // map_y
+                x1 = (i + 1) * image_size[0] // map_x
+                y1 = (j + 1) * image_size[1] // map_y
+                avg_brightness = np.mean(hsv_map[y0:y1, x0:x1])
+                upd_pos.append([i, j, avg_brightness])
+        upd_pos = sorted(upd_pos, key=lambda x: x[2], reverse=True)[:min(len(upd_pos), memory_update_topk)]
+        upd_pos = [[pos[0], pos[1]] for pos in upd_pos]
+        upd_poss.append(upd_pos)
+    return upd_poss
 
 
 from starVLA.training.trainer_utils import initialize_overwatch
@@ -285,4 +427,3 @@ def read_mode_config(pretrained_checkpoint):
         overwatch.error(f"❌ Pretrained checkpoint `{pretrained_checkpoint}` does not exist.")
         raise FileNotFoundError(f"Pretrained checkpoint `{pretrained_checkpoint}` does not exist.")
     return global_cfg, norm_stats
-

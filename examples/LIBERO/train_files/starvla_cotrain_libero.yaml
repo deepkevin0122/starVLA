@@ -33,6 +33,12 @@ framework:
     num_timestep_buckets: 1000
     num_inference_timesteps: 4
     num_target_vision_tokens: 32
+    memory_map_x_size: 4
+    memory_map_y_size: 4
+    memory_update_topk: 4
+    memory_dropout: 0.1
+    memory_update_rate: 0.5
+    memory_gnn_update_rate: 0.05
     diffusion_model_cfg:    # DiT Transformers 的参数
       cross_attention_dim: 2048 # VLM 的 dim
       dropout: 0.2
@@ -65,7 +71,7 @@ datasets:
     data_root_dir: playground/Datasets/LEROBOT_LIBERO_DATA
     data_mix: libero_all # libero_goal
     action_type: delta_qpos
-    CoT_prompt: "Your task is {instruction}. To identify the key objects for your task. Locate their bounding boxes in [x1,y1,x2,y2] format."
+    CoT_prompt: "Given the task instruction '{instruction}', analyze the Global Image, Wrist Image, and the Motion Heatmap (clear regions = current motion; blue glows = after-images of the last move) together with the Previous Action '{previous_action}'. Infer the current phase from the gripper state: Pre-Grasp (empty), Grasping (closing/alignment/contact), Post-Grasp (holding), Loosing (releasing/opening). Use the heatmap and wrist view to locate the actively controlled manipulator (end-effector/gripper) and align each action_key in '{previous_action}' to its corresponding physical motion dimension in the current scene so the next action matches the observed motion and constraints. Output a structured result: Current Phase [Pre-Grasp/Grasping/Post-Grasp/Loosing], Target BBox [x1,y1,x2,y2] (object/interaction part if Pre-Grasp/Grasping, destination/placement region if Post-Grasp/Loosing), and New Action for each action_key in previous_action with values in {-1,0,1} meaning decrease/keep/increase."
     CoT_answer: bbox
     default_image_resolution: [3, 224, 224]
     per_device_batch_size: 1

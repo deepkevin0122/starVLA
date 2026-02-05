@@ -116,12 +116,12 @@ class _QWen3_VL_Interface(nn.Module):
         # Create messages: one message per sample
         messages = []
         assert len(images) == len(instructions), "Images and instructions must have the same length"
-        for imgs, instruction in zip(images, instructions):
+        for imgs, instruction, action_key in zip(images, instructions, action_keys):
             content = [{"type": "image", "image": img} for img in imgs]
 
             if "CoT_prompt" in self.config.datasets.vla_data:  # If using a grounding prompt to task
-                CoT_prompt = self.config.datasets.vla_data.get("CoT_prompt", "")
-                prompt = CoT_prompt.replace("{instruction}", instruction)
+                prompt = self.config.datasets.vla_data.get("CoT_prompt", "")
+                prompt = prompt.replace("{instruction}", instruction)
             else:
                 prompt = instruction
 
@@ -136,12 +136,12 @@ class _QWen3_VL_Interface(nn.Module):
         # Preparation for inference
 
         batch_inputs = self.processor.apply_chat_template(
-        messages,
-        tokenize=True,
-        padding=True,
-        add_generation_prompt=True,
-        return_dict=True,
-        return_tensors="pt"
+            messages,
+            tokenize=True,
+            padding=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt"
         )
 
         # if solutions, mask out the solution tokens in labels
@@ -168,9 +168,75 @@ class _QWen3_VL_Interface(nn.Module):
             batch_inputs['labels'] = labels
 
         return batch_inputs.to(self.model.device)
+    def build_qwenvl_inputs_pro(self, images, action_keys, change_maps, flow_maps, instructions, solutions=None, **kwargs):
+        """
+        Build model inputs from raw data (images + instructions + optional solutions).
+        Follow Oficial Qwen3-VL Instruct format: https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct
+        """
 
+        # Create messages: one message per sample
+        messages = []
+        assert len(images) == len(instructions), "Images and instructions must have the same length"
+        for imgs, instruction, action_key, chgmps, flwmps, in zip(images, instructions, action_keys, change_maps, flow_maps):
+            content = []
+            for img, chgmp, flwmp in zip(imgs, chgmps, flwmps):
+                content.append({"type": "image", "image": img})
+                content.append({"type": "image", "image": chgmp})
+                content.append({"type": "image", "image": flwmp})
 
+            if "CoT_prompt" in self.config.datasets.vla_data:  # If using a grounding prompt to task
+                prompt = self.config.datasets.vla_data.get("CoT_prompt", "")
+                
+                prompt = prompt.replace("{instruction}", instruction)
+                prompt = prompt.replace("{previous_action}", action_key)
+                print("Using CoT prompt")
+            else:
+                print("Not using CoT prompt")
+                prompt = instruction
 
+            content.append({"type": "text", "text": prompt})
+            msg = [{"role": "user", "content": content}]
+
+            if solutions is not None:
+                solution = solutions[len(messages)]
+                msg.append({"role": "assistant", "content": [{"type": "text", "text": solution}]})
+            messages.append(msg)
+
+        # Preparation for inference
+
+        batch_inputs = self.processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            padding=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt"
+        )
+
+        # if solutions, mask out the solution tokens in labels
+        if solutions is not None: #  here only for fast_tokenizer now. 
+            action_token_min = _ACTION_TOKEN_MIN # how can we know this range? --> we has other way for this, but is slower see qwenhelix branch
+            action_token_max = _ACTION_TOKEN_MAX # here only for fast_tokenizer, see starVLA/model/modules/vlm/tools/add_qwen_special_tokens/README.md
+            labels = batch_inputs['input_ids'].clone()
+            # For each sequence in the batch, find the first occurrence of an action token.
+            for i in range(labels.size(0)):
+                seq = labels[i]
+                # Create a mask for tokens within the action token range.
+                mask_seq = (seq >= action_token_min) & (seq <= action_token_max)
+                nonzero_indices = torch.nonzero(mask_seq, as_tuple=False)
+                if nonzero_indices.numel() > 0:
+                    first_action_index = nonzero_indices[0].item()
+                    # Mask out all tokens before the first action token.
+                    seq[:first_action_index] = IGNORE_INDEX
+                else:
+                    # If no action token is found, mask the entire sequence.
+                    seq[:] = IGNORE_INDEX
+                    RuntimeWarning (f"action token are on in yout tokenizer, plz see starVLA/model/modules/vlm/tools/add_qwen_special_tokens/README.md.")
+            
+            labels[labels == self.processor.tokenizer.pad_token_id] = -100 ## mask out pad tokens as well
+            batch_inputs['labels'] = labels
+
+        return batch_inputs.to(self.model.device)
 
 if __name__ == "__main__":
     from omegaconf import OmegaConf
