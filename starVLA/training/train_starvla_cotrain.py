@@ -467,8 +467,9 @@ class VLAMTrainer(TrainerUtils):
             # VLA task forward propagation
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
-                action_loss = output_dict["action_loss"] # to be modified
-                total_loss = action_loss * self.config.trainer.loss_scale.vla
+                action_loss = output_dict["action_loss"]
+                memory_loss = output_dict["memory_loss"]
+                total_loss = action_loss * self.config.trainer.loss_scale.vla + memory_loss * self.config.trainer.loss_scale.memory
             if self.config.trainer.loss_scale.vla > 0.0:
                 self.accelerator.backward(total_loss)
             pass

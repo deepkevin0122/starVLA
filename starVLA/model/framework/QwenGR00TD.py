@@ -168,9 +168,10 @@ class Qwen_GR00TD(baseframework):
             state_repeated = None
 
             action_loss = self.action_model(last_hidden_repeated, actions_target_repeated, state_repeated)
-
+            
+            action_loss = 
         # Step 7: Return Losses
-        return {"action_loss": action_loss, "las_action_loss": las_action_loss}
+        return {"action_loss": action_loss, "memory_loss": las_action_loss}
 
     @torch.inference_mode()
     def predict_action(

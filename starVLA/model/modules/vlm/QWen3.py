@@ -188,7 +188,7 @@ class _QWen3_VL_Interface(nn.Module):
                 prompt = self.config.datasets.vla_data.get("CoT_prompt", "")
                 
                 prompt = prompt.replace("{instruction}", instruction)
-                prompt = prompt.replace("{previous_action}", action_key)
+                prompt = prompt.replace("{action_keys}", action_key)
                 print("Using CoT prompt")
             else:
                 print("Not using CoT prompt")
