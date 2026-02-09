@@ -494,6 +494,7 @@ class VLAMTrainer(TrainerUtils):
             log_dict.update(
                 {
                     "action_dit_loss": action_loss.item(),
+                    "memory_loss": memory_loss.item(),
                     "vlm_loss": vlm_loss.item(),
                 }
             )

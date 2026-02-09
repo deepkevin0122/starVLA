@@ -427,3 +427,46 @@ def read_mode_config(pretrained_checkpoint):
         overwatch.error(f"❌ Pretrained checkpoint `{pretrained_checkpoint}` does not exist.")
         raise FileNotFoundError(f"Pretrained checkpoint `{pretrained_checkpoint}` does not exist.")
     return global_cfg, norm_stats
+
+def _to_uint8_img(x):
+    # x: torch.Tensor / np.ndarray / PIL.Image / list
+    try:
+        import torch
+        if isinstance(x, torch.Tensor):
+            x = x.detach().cpu().float().numpy()
+    except Exception:
+        pass
+
+    # PIL
+    try:
+        from PIL import Image
+        if isinstance(x, Image.Image):
+            return x
+    except Exception:
+        pass
+
+    x = np.array(x)
+
+    # shape normalize: (C,H,W) -> (H,W,C)
+    if x.ndim == 3 and x.shape[0] in (1, 3, 4) and x.shape[0] < x.shape[-1]:
+        x = np.transpose(x, (1, 2, 0))
+
+    # if single channel, squeeze to (H,W)
+    if x.ndim == 3 and x.shape[-1] == 1:
+        x = x[..., 0]
+
+    # normalize to uint8
+    if x.dtype != np.uint8:
+        x = x.astype(np.float32)
+        # common cases: [0,1] or [0,255] or arbitrary
+        if np.nanmax(x) <= 1.0 + 1e-6:
+            x = x * 255.0
+        else:
+            # rescale robustly if needed
+            mn, mx = np.nanmin(x), np.nanmax(x)
+            if mx > mn:
+                x = (x - mn) / (mx - mn) * 255.0
+        x = np.clip(x, 0, 255).astype(np.uint8)
+
+    from PIL import Image
+    return Image.fromarray(x)

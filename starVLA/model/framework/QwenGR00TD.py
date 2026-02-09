@@ -41,7 +41,7 @@ from starVLA.model.modules.action_model.GR00T_ActionHeader import get_action_mod
 from starVLA.training.trainer_utils.trainer_tools import resize_images
 from starVLA.model.tools import FRAMEWORK_REGISTRY
 from starVLA.model.MemoryMap import MemoryMap
-from starVLA.model.tools import build_change_flow_map, _calculate_update_positions
+from starVLA.model.tools import build_change_flow_map, _calculate_update_positions, _to_uint8_img
 
 
 @FRAMEWORK_REGISTRY.register("QwenGR00TD")
@@ -100,6 +100,7 @@ class Qwen_GR00TD(baseframework):
             self.qwen_vl_interface.model.config.hidden_size * 2,
             self.config.framework.action_model.get("action_dim", 7)
         )
+        self.step = 0
 
     import numpy as np
     import cv2
@@ -113,6 +114,7 @@ class Qwen_GR00TD(baseframework):
         """
 
         """
+        self.step = self.step + 1
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
         batch_las_images = [example["las_image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
@@ -121,6 +123,16 @@ class Qwen_GR00TD(baseframework):
         actions = [example["action"] for example in examples]  # label [B， len, 7]
         # Step 1: Build Change Map and FlowMap
         batch_change_map, batch_flow_map, batch_hsv_map = build_change_flow_map(batch_images, batch_las_images)
+
+        os.makedirs("./debug/train/images", exist_ok=True)
+        bcm = batch_change_map[0]
+        bfm = batch_flow_map[0]
+        bhm = batch_hsv_map[0]
+
+        _to_uint8_img(bcm).save(f"./debug/images/bcm_{self.step}.png")
+        _to_uint8_img(bfm).save(f"./debug/images/bfm_{self.step}.png")
+        _to_uint8_img(bhm).save(f"./debug/images/bhm_{self.step}.png")
+
         # Calculate Memory Map Update Positions based on HSV brightness
         upd_poss = _calculate_update_positions(batch_hsv_map, self.map_x, self.map_y, self.image_size, self.memory_update_topk)
         # Step 2: QWenVL Inputs
@@ -168,8 +180,6 @@ class Qwen_GR00TD(baseframework):
             state_repeated = None
 
             action_loss = self.action_model(last_hidden_repeated, actions_target_repeated, state_repeated)
-            
-            action_loss = 
         # Step 7: Return Losses
         return {"action_loss": action_loss, "memory_loss": las_action_loss}
 
