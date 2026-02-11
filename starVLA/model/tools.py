@@ -465,3 +465,34 @@ def _to_uint8_img(x):
 
     from PIL import Image
     return Image.fromarray(x)
+
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+def get_2d_sincos_pos_embed(map_x, map_y, dim):
+    """
+    生成 2D 正弦位置编码
+    return: [map_x*map_y, dim]
+    """
+    assert dim % 4 == 0, "dim must be divisible by 4 for 2D sincos"
+
+    dim = dim // 2
+    pos_x = torch.arange(map_x, dtype=torch.float32).unsqueeze(1)  # [map_x,1]
+    pos_y = torch.arange(map_y, dtype=torch.float32).unsqueeze(1)  # [map_y,1]
+
+    # frequency
+    omega = torch.arange(dim, dtype=torch.float32) / dim
+    omega = 1. / (10000 ** omega)  # [dim]
+
+    pos_x = pos_x @ omega.unsqueeze(0)  # [map_x, dim]
+    pos_y = pos_y @ omega.unsqueeze(0)  # [map_y, dim]
+
+    pos_x_embed = torch.cat([pos_x.sin(), pos_x.cos()], dim=1)  # [map_x, dim*2]
+    pos_y_embed = torch.cat([pos_y.sin(), pos_y.cos()], dim=1)  # [map_y, dim*2]
+
+    # expand to 2D grid
+    pos_embed = pos_x_embed[:, None, :] + pos_y_embed[None, :, :]  # [map_x, map_y, dim*2]
+    pos_embed = pos_embed.reshape(map_x*map_y, -1)  # [map_x*map_y, dim*4] = dim
+    return pos_embed  # [map_x*map_y, dim]

@@ -41,7 +41,7 @@ from starVLA.model.modules.action_model.GR00T_ActionHeader import get_action_mod
 from starVLA.training.trainer_utils.trainer_tools import resize_images
 from starVLA.model.tools import FRAMEWORK_REGISTRY
 from starVLA.model.MemoryMap import MemoryMap
-from starVLA.model.tools import build_change_flow_map, _calculate_update_positions, _to_uint8_img
+from starVLA.model.tools import build_change_flow_map, _calculate_update_positions, _to_uint8_img, get_2d_sincos_pos_embed
 
 
 @FRAMEWORK_REGISTRY.register("QwenGR00TD")
@@ -74,28 +74,32 @@ class Qwen_GR00TD(baseframework):
         self.config = config
         self.qwen_vl_interface = get_vlm_model(config=self.config)
         # align dims --> we should put them to config or no?
-        self.config.framework.action_model.diffusion_model_cfg.cross_attention_dim = self.qwen_vl_interface.model.config.hidden_size
-
         self.action_model: FlowmatchingActionHead = get_action_model(config=self.config)  # 修复后续引用
+        self.hidden_dim = self.qwen_vl_interface.model.config.hidden_size
+        self.config.framework.action_model.diffusion_model_cfg.cross_attention_dim = self.hidden_dim
 
         self.future_action_window_size = config.framework.action_model.future_action_window_size
         self.past_action_window_size = config.framework.action_model.past_action_window_size
         self.chunk_len = self.past_action_window_size + 1 + self.future_action_window_size
+        self.attn_output = nn.MultiheadAttention(embed_dim=self.hidden_dim, num_heads=4)
         self.map_x = self.config.framework.action_model.get("memory_map_x_size", 4)
         self.map_y = self.config.framework.action_model.get("memory_map_y_size", 4) 
         self.memory_update_topk = self.config.framework.action_model.get("memory_update_topk", 4)
         self.memory = MemoryMap(
             map_x=self.map_x,
             map_y=self.map_y,
-            memory_dim=self.qwen_vl_interface.model.config.hidden_size,
+            memory_dim=self.hidden_dim,
             update_rate=self.config.framework.action_model.get("memory_update_rate", 0.5),
             drop_rate=self.config.framework.action_model.get("memory_dropout", 0.1),
             gnn_update_rate=self.config.framework.action_model.get("memory_gnn_update_rate", 0.05),
             dtype=torch.float32
         )
+        self.pos_embed = get_2d_sincos_pos_embed(self.map_x, self.map_y, self.hidden_dim)
         self.image_size = (224, 224)  # default image size
+        self.memory_film_gamma = nn.Linear(self.hidden_dim, self.hidden_dim)
+        self.memory_film_beta = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.linear_action_pred = nn.Linear(
-            self.qwen_vl_interface.model.config.hidden_size * 2,
+            2 * self.hidden,
             self.config.framework.action_model.get("action_dim", 7)
         )
         self.step = 0
@@ -121,7 +125,9 @@ class Qwen_GR00TD(baseframework):
         actions = [example["action"] for example in examples]  # label [B， len, 7]
         # Step 1: Build Change Map and FlowMap
         batch_change_map, batch_flow_map, batch_hsv_map = build_change_flow_map(batch_images, batch_las_images)
-
+        # Calculate Memory Map Update Positions based on HSV brightness
+        upd_poss = _calculate_update_positions(batch_hsv_map, self.map_x, self.map_y, self.image_size, self.memory_update_topk)
+"""
         os.makedirs("./debug/train/images", exist_ok=True)
         os.makedirs("./debug/train/text", exist_ok=True)
         bcm = batch_change_map[0][0]
@@ -132,11 +138,10 @@ class Qwen_GR00TD(baseframework):
         _to_uint8_img(bfm).save(f"./debug/train/images/bfm_{self.step}.png")
         _to_uint8_img(bhm).save(f"./debug/train/images/bhm_{self.step}.png")
 
-        # Calculate Memory Map Update Positions based on HSV brightness
-        upd_poss = _calculate_update_positions(batch_hsv_map, self.map_x, self.map_y, self.image_size, self.memory_update_topk)
         with open("./debug/train/text/upd_ppos_{self.step}.txt","w",encoding="utf-8") as f:
             for i in range(len(upd_poss)):
                 f.write(",".join(map(str,upd_poss[i]))+"\n")
+"""
         # Step 2: QWenVL Inputs
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs_pro(
             images=batch_images, 
@@ -156,21 +161,50 @@ class Qwen_GR00TD(baseframework):
             last_hidden = qwenvl_outputs.hidden_states[-1]
 
         with torch.autocast("cuda", dtype=torch.float32):
-            calc_hidden = last_hidden.mean(dim=1).float()
+            # recalc
+            # memory token
+            memory_calc = self.memory.get_memory()  # [map_x*map_y, D]
+            B, T, D = last_hidden.size()
+            map_x, map_y = self.map_x, self.map_y
+
+            # MultiheadAttention 要求 (seq_len, batch, embed_dim)
+            memory_calc = memory_calc.unsqueeze(1).expand(-1, B, -1)  # [map_x*map_y, B, D]
+            last_hidden_t = last_hidden.transpose(0,1)               # [T, B, D]
+            calc_hidden, _ = self.attn_output(
+                query=memory_calc,
+                key=last_hidden_t,
+                value=last_hidden_t
+            )  # [map_x*map_y, B, D]
+
+            # 转回 batch first
+            calc_hidden = calc_hidden.transpose(0,1)  # [B, map_x*map_y, D]
+
             memory = self.memory(
                 ext=calc_hidden,
                 upd_poss=upd_poss,
                 update=True
-            ).to(device=last_hidden.device, dtype=torch.float32)
+            ).to(device=last_hidden.device, dtype=torch.float32) # # [B, map_x*map_y, D]
+
+            memory_with_pos = memory + self.pos_embed.unsqueeze(0).to(memory.device)
+            memory_pool = memory_with_pos.mean(dim=1)
+            
+            # FiLM 生成 gamma 和 beta
+            gamma = self.memory_film_gamma(memory_pool).unsqueeze(1).to(last_hidden.device)  # [B, 1, D]
+            beta  = self.memory_film_beta(memory_pool).unsqueeze(1).to(last_hidden.device)   # [B, 1, D]
+            last_hidden_mod = last_hidden * gamma + beta  # [B, T, D]
+
+            calc_hidden_pos = calc_hidden + self.pos_embed.unsqueeze(0).to(calc_hidden.device)
+            calc_pool = calc_hidden_pos.mean(dim=1)
 
             batch_las_action = torch.tensor(np.array(batch_las_action), device=last_hidden.device, dtype=torch.float32)
             batch_las_action = batch_las_action[:, -(self.future_action_window_size+1), :] 
 
-            concat_feat = torch.cat([calc_hidden, memory], dim=-1) 
+            concat_feat = torch.cat([calc_pool, memory_pool], dim=-1) 
             las_action_pred = self.linear_action_pred(concat_feat) 
             las_action_loss = F.l1_loss(las_action_pred, batch_las_action).float()
 
-            last_hidden = torch.cat([last_hidden, memory.unsqueeze(1).to(dtype=last_hidden.dtype)], dim=1)
+            
+
             actions = torch.tensor(np.array(actions), device=last_hidden.device, dtype=last_hidden.dtype)
             actions_target = actions[:, -(self.future_action_window_size+1):, :]
 
@@ -178,7 +212,7 @@ class Qwen_GR00TD(baseframework):
                 self.config.trainer.get("repeated_diffusion_steps", 4) if self.config and self.config.trainer else 4
             )
             actions_target_repeated = actions_target.repeat(repeated_diffusion_steps, 1, 1)
-            last_hidden_repeated = last_hidden.repeat(repeated_diffusion_steps, 1, 1)
+            last_hidden_repeated = last_hidden_mod.repeat(repeated_diffusion_steps, 1, 1)
             state_repeated = None
 
             action_loss = self.action_model(last_hidden_repeated, actions_target_repeated, state_repeated)
@@ -213,7 +247,6 @@ class Qwen_GR00TD(baseframework):
         batch_change_map, batch_flow_map, batch_hsv_map = build_change_flow_map(batch_images, batch_las_images)
         # Calculate Memory Map Update Positions based on HSV brightness
         upd_poss = _calculate_update_positions(batch_hsv_map, self.map_x, self.map_y, self.image_size, self.memory_update_topk)
-        print("finish data prepare",flush=True)
         # Step 2: QWenVL Inputs
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs_pro(
             images=batch_images, 
@@ -222,7 +255,6 @@ class Qwen_GR00TD(baseframework):
             flow_maps=batch_flow_map,
             instructions=instructions
         )
-        print("QwenForwarding",flush=True)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             # Step 3: Forward QwenVL
             qwenvl_outputs = self.qwen_vl_interface(
@@ -231,19 +263,40 @@ class Qwen_GR00TD(baseframework):
                 output_hidden_states=True,
                 return_dict=True,
             )
-            print("end of Forwarding",flush=True)
             last_hidden = qwenvl_outputs.hidden_states[-1]
-            calc_hidden = last_hidden.mean(dim=1).float()
-            memory = self.memory(
-                ext=calc_hidden, 
-                upd_poss=upd_poss,
-                update=False
-            ).to(device=last_hidden.device, dtype=torch.float32)
-            print("memory",flush=True)
-            last_hidden = torch.cat([last_hidden, memory.unsqueeze(1).to(dtype=last_hidden.dtype)], dim=1)
         state = None
         with torch.autocast("cuda", dtype=torch.float32):
-            pred_actions = self.action_model.predict_action(last_hidden, state)  # (B, chunk_len, action_dim)
+            memory_calc = self.memory.get_memory()  # [map_x*map_y, D]
+            B, T, D = last_hidden.size()
+            map_x, map_y = self.map_x, self.map_y
+
+            # MultiheadAttention 要求 (seq_len, batch, embed_dim)
+            memory_calc = memory_calc.unsqueeze(1).expand(-1, B, -1)  # [map_x*map_y, B, D]
+            last_hidden_t = last_hidden.transpose(0,1)               # [T, B, D]
+            calc_hidden, _ = self.attn_output(
+                query=memory_calc,
+                key=last_hidden_t,
+                value=last_hidden_t
+            )  # [map_x*map_y, B, D]
+
+            # 转回 batch first
+            calc_hidden = calc_hidden.transpose(0,1)  # [B, map_x*map_y, D]
+
+            memory = self.memory(
+                ext=calc_hidden,
+                upd_poss=upd_poss,
+                update=False
+            ).to(device=last_hidden.device, dtype=torch.float32) # # [B, map_x*map_y, D]
+
+            memory_with_pos = memory + self.pos_embed.unsqueeze(0).to(memory.device)
+            memory_pool = memory_with_pos.mean(dim=1)
+            
+            # FiLM 生成 gamma 和 beta
+            gamma = self.memory_film_gamma(memory_pool).unsqueeze(1).to(last_hidden.device)  # [B, 1, D]
+            beta  = self.memory_film_beta(memory_pool).unsqueeze(1).to(last_hidden.device)   # [B, 1, D]
+            last_hidden_mod = last_hidden * gamma + beta  # [B, T, D]
+
+            pred_actions = self.action_model.predict_action(last_hidden_mod, state)  # (B, chunk_len, action_dim)
         normalized_actions = pred_actions.detach().cpu().numpy()
         return {"normalized_actions": normalized_actions}
 

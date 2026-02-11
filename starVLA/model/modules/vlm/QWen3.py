@@ -189,9 +189,7 @@ class _QWen3_VL_Interface(nn.Module):
                 
                 prompt = prompt.replace("{instruction}", instruction)
                 prompt = prompt.replace("{action_keys}", action_key)
-                print("Using CoT prompt")
             else:
-                print("Not using CoT prompt")
                 prompt = instruction
 
             content.append({"type": "text", "text": prompt})

@@ -50,20 +50,22 @@ class MemoryMap(nn.Module):
         self.register_buffer("gnn_norm", count)
         self.register_buffer("update_counts", torch.zeros((self.map_x, self.map_y), dtype=torch.long))
         self.register_buffer("last_update_step", torch.zeros(1, dtype=torch.long))
+    
+    def get_memory(self):
+        return self.memory.view(self.map_x * self.map_y, self.memory_dim)
         
     def forward(self, ext: torch.Tensor, 
                 upd_poss: Optional[List[List[List[int]]]] = None,
                 update: Optional[bool] = True) -> torch.Tensor:
         """
         Args:
-            ext: [B, VLM_embedding_size] 外部输入特征
+            ext: [B, map_x*map_y, VLM_embedding_size] 外部输入特征
             upd_poss: 三维列表，每个batch包含多个[x,y]位置坐标
             update: 是否更新memory
         Returns:
             global_embedding: [B, memory_dim] 在ext注意力下的全局embedding
         """
         self.update = update
-        batch_size = ext.shape[0]
         processed_ext = self._process_external_input(ext)
         if self.update:
             self._update_memory_dynamic(processed_ext, upd_poss)
@@ -84,8 +86,6 @@ class MemoryMap(nn.Module):
 
     def _update_memory_dynamic(self, ext: torch.Tensor, upd_poss: List[List[List[int]]]):
         device = ext.device
-        if self.memory.device != device:
-            self.memory = self.memory.to(device)
         coords = []
         val_indices = []
         for i, pos_list in enumerate(upd_poss):
@@ -93,33 +93,24 @@ class MemoryMap(nn.Module):
                 if 0 <= x < self.map_x and 0 <= y < self.map_y:
                     coords.append([x, y])
                     val_indices.append(i)
-        
-        if not coords:
-            return current_mem
 
         coords_tensor = torch.tensor(coords, device=device, dtype=torch.long)
         flat_indices = coords_tensor[:, 0] * self.map_y + coords_tensor[:, 1]
-        
-        B, D = ext.shape[0], self.memory_dim
         M = self.map_x * self.map_y
 
-        updates = ext[val_indices] # [N, D]
-        old_vals = self.memory.view(-1, self.memory_dim)[flat_indices]
-        
-        diff = (updates - old_vals) * self.update_rate
-        
-        delta = torch.zeros((self.map_x * self.map_y, self.memory_dim), 
-                            device=device, dtype=self.dtype)
-        delta.index_add_(0, flat_indices, diff)
+        delta = torch.zeros((M, self.memory_dim), device=device, dtype=self.dtype)
+        num = torch.zeros((M, 1), device=device, dtype=self.dtype)
+        delta.index_add_(0, flat_indices, ext[val_indices, flat_indices])
+        num.index_add_(0, flat_indices, torch.ones_like(flat_indices, dtype=torch.float))
+        delta = delta / torch.where(num > 0, num, torch.ones_like(num))
 
         if dist.is_initialized():
             delta_d = delta.detach()
             dist.all_reduce(delta_d, op=dist.ReduceOp.AVG)
             delta = delta_d
-
-        new_mem = self.memory.view(-1, self.memory_dim) + delta
+        
+        new_mem = self.memory.view(-1, self.memory_dim) * (1 - self.update_rate) + delta * self.update_rate
         new_mem = new_mem.view(self.map_x, self.map_y, self.memory_dim)
-
         updated_memory = self._apply_gnn_propagation_graph_safe(new_mem)
         with torch.no_grad():
             self.memory.data.copy_(updated_memory.data)
@@ -143,7 +134,7 @@ class MemoryMap(nn.Module):
 
         src = mem_in.permute(2, 0, 1).unsqueeze(0)
         
-        norm_factor = self.gnn_norm.clamp(min=1.0).to(device)
+        norm_factor = self.gnn_norm.clamp(min=1.0)
 
         for _ in range(K):
             neighbor_sum = F.conv2d(src, kernel, padding=1, groups=self.memory_dim)
@@ -157,8 +148,8 @@ class MemoryMap(nn.Module):
     
     def _compute_similarity_based_embedding(self, ext: torch.Tensor) -> torch.Tensor:
         """强化后的数值稳定注意力机制"""
-        batch_size = ext.shape[0]
-        
+        # ext : [B, map_x * map_y, D]
+        # self.memory : [map_x, map_y, D]
         ext_normalized = self.norm_ext(ext)
         mem_normalized = self.norm_mem(self.memory.reshape(-1, self.memory_dim))
         queries_norm = F.normalize(self.attention_query_proj(ext_normalized), p=2, dim=-1)

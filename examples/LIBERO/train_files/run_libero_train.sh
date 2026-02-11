@@ -22,7 +22,7 @@ config_yaml=./examples/LIBERO/train_files/starvla_cotrain_libero.yaml
 libero_data_root=playground/Datasets/LEROBOT_LIBERO_DATA
 data_mix=libero_all
 run_root_dir=./results/Checkpoints
-run_id=libero4in1_Qwen3GR00TD_cotrain_v1
+run_id=libero4in1_Qwen3GR00TD_cotrain_v2
 # === End of environment variable configuration ===
 ###########################################################################################
 
