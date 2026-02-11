@@ -50,7 +50,7 @@ accelerate launch \
   --datasets.vla_data.per_device_batch_size 1 \
   --trainer.vla_data.video_backend torchvision_av \
   --trainer.freeze_modules ${freeze_module_list} \
-  --trainer.max_train_steps 300000 \
+  --trainer.max_train_steps 1000000 \
   --trainer.save_interval 10000 \
   --trainer.logging_frequency 100 \
   --trainer.eval_interval 100 \
