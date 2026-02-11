@@ -207,17 +207,10 @@ class VLAMTrainer(TrainerUtils):
 
     def _save_checkpoint(self):
         """save current training state"""
-
+        self.accelerator.wait_for_everyone()
+        checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
+        self.accelerator.save_state(checkpoint_path)
         if self.accelerator.is_main_process:
-            self.model.memory().save_memory_map(
-                suffix=f"steps_{self.completed_steps}"
-            )
-            checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
-            # save model state
-            state_dict = self.accelerator.get_state_dict(self.model)
-            torch.save(state_dict, checkpoint_path + "_pytorch_model.pt")
-
-            # save training metadata
             summary_data = {
                 "steps": self.completed_steps,
             }
@@ -366,14 +359,12 @@ class VLAMTrainer(TrainerUtils):
         # main training loop
         while self.completed_steps < self.config.trainer.max_train_steps:
             # get data batch
+            
             t_start_data = time.perf_counter()
             batch_vla, batch_vlm = self._get_next_batch()
-            if self.completed_steps % 10 == 0:
-                self.save_batch_vla(batch_vla, "/dataset/vkevinzhao/code/starVLA/debug/start/", self.completed_steps)
+            #if self.completed_steps % 10 == 0:
+            #    self.save_batch_vla(batch_vla, "/dataset/vkevinzhao/code/starVLA/debug/start/", self.completed_steps)
             t_end_data = time.perf_counter()
-            # self.completed_steps += 1 
-            # continue 
-            # execute training step
             t_start_model = time.perf_counter()
             step_metrics = self._train_step(batch_vla, batch_vlm)
             t_end_model = time.perf_counter()
@@ -397,13 +388,13 @@ class VLAMTrainer(TrainerUtils):
             # record metrics
             step_metrics["data_time"] = t_end_data - t_start_data
             step_metrics["model_time"] = t_end_model - t_start_model
+            dist.barrier()
             self._log_metrics(step_metrics)
+            dist.barrier()
 
             # save checkpoint
             if self.completed_steps % self.config.trainer.save_interval == 0 and self.completed_steps > 0:
                 self._save_checkpoint()
-
-                dist.barrier()  # ensure all processes are synchronized, avoid timeout
 
             # check termination condition
             if self.completed_steps >= self.config.trainer.max_train_steps:
@@ -423,28 +414,28 @@ class VLAMTrainer(TrainerUtils):
         :return: Average metric score across the evaluation dataset.
         """
 
-        if self.accelerator.is_main_process:
+        # if self.accelerator.is_main_process:
 
-            examples, vlm_data = self._get_next_batch()
+        examples, vlm_data = self._get_next_batch()
 
-            score = 0.0
-            num_samples = len(examples)
-            actions = [example["action"] for example in examples]  # label
+        score = 0.0
+        num_samples = len(examples)
+        actions = [example["action"] for example in examples]  # label
 
-            # Predict actions using the model
-            output_dict = self.model.predict_action(
-                examples=examples
-            )
+        # Predict actions using the model
+        output_dict = self.model.predict_action(
+            examples=examples
+        )
 
-            normalized_actions = output_dict["normalized_actions"]  # B, T, D
+        normalized_actions = output_dict["normalized_actions"]  # B, T, D
 
-            actions = np.array(actions)  # convert actions to numpy.ndarray
-            # B, Chunk, dim = actions.shape
-            num_pots = np.prod(actions.shape)
-            # Compute the metric score
-            score = TrainerUtils.euclidean_distance(normalized_actions, actions)
-            average_score = score / num_pots
-            step_metrics["mse_score"] = average_score
+        actions = np.array(actions)  # convert actions to numpy.ndarray
+        # B, Chunk, dim = actions.shape
+        num_pots = np.prod(actions.shape)
+        # Compute the metric score
+        score = TrainerUtils.euclidean_distance(normalized_actions, actions)
+        average_score = score / num_pots
+        step_metrics["mse_score"] = average_score
 
         dist.barrier()
         return step_metrics

@@ -2,7 +2,7 @@ run_id: starvla
 run_root_dir: results/Checkpoints
 seed: 42
 trackers: [jsonl, wandb]
-wandb_entity: None
+wandb_entity: deepkevin0122-hong-kong-university-of-science-and-technology
 wandb_project: None
 is_debug: false
 
@@ -39,6 +39,7 @@ framework:
     memory_dropout: 0.1
     memory_update_rate: 0.5
     memory_gnn_update_rate: 0.05
+
     diffusion_model_cfg:    # DiT Transformers 的参数
       cross_attention_dim: 2048 # VLM 的 dim
       dropout: 0.2
@@ -71,7 +72,7 @@ datasets:
     data_root_dir: playground/Datasets/LEROBOT_LIBERO_DATA
     data_mix: libero_all # libero_goal
     action_type: delta_qpos
-    CoT_prompt: "Given the task instruction '{instruction}', analyze the Global Image, Wrist Image, and the Motion Heatmap (clear regions = current motion; blue glows = after-images of the last move) together with the Previous Action '{previous_action}'. Infer the current phase from the gripper state: Pre-Grasp (empty), Grasping (closing/alignment/contact), Post-Grasp (holding), Loosing (releasing/opening). Use the heatmap and wrist view to locate the actively controlled manipulator (end-effector/gripper) and align each action_key in '{previous_action}' to its corresponding physical motion dimension in the current scene so the next action matches the observed motion and constraints. Output a structured result: Current Phase [Pre-Grasp/Grasping/Post-Grasp/Loosing], Target BBox [x1,y1,x2,y2] (object/interaction part if Pre-Grasp/Grasping, destination/placement region if Post-Grasp/Loosing), and New Action for each action_key in previous_action with values in {-1,0,1} meaning decrease/keep/increase."
+    CoT_prompt: "Task: {instruction}. Role: Robotic Spatial Analyst. Instructions: 1. Treat Change and Flow Maps as the visual outcome of the robot's previous movement from t-1 to t. 2. Locate the Gripper (G) and Target (T) in a [0-100] 3D grid, where T is the Grasp Point (pre-grasp) or Goal (post-grasp). 3. Map the visual displacement seen in Flow/Change Maps onto the specific control axes defined in {action_keys} to estimate the 'Observed Previous Action' in those dimensions. 4. Predict the 'Next Direction' [-1, 0, 1] for each translation axis to minimize the distance between G and T. Format: Thought: [Analyze how visual flow translates into the dimensions of {action_keys}] 3D_Pos: Gripper [x1,y1,z1], Target [x2,y2,z2] Observed_Action: [Estimated delta for each key in {action_keys}] Next_Direction: [vx,vy,vz]."
     CoT_answer: bbox
     default_image_resolution: [3, 224, 224]
     per_device_batch_size: 1
@@ -97,6 +98,7 @@ trainer:
   loss_scale:
     vla: 1.0
     vlm: 0.1
+    memory: 0.5
   max_grad_norm: 1.0
   warmup_ratio: 0.1
   weight_decay: 0.0

@@ -91,8 +91,6 @@ class Qwen_GR00TD(baseframework):
             update_rate=self.config.framework.action_model.get("memory_update_rate", 0.5),
             drop_rate=self.config.framework.action_model.get("memory_dropout", 0.1),
             gnn_update_rate=self.config.framework.action_model.get("memory_gnn_update_rate", 0.05),
-            persistence_path = os.path.join(self.config.output_dir, "memory"),
-            auto_save = True,
             dtype=torch.float32
         )
         self.image_size = (224, 224)  # default image size
@@ -125,16 +123,20 @@ class Qwen_GR00TD(baseframework):
         batch_change_map, batch_flow_map, batch_hsv_map = build_change_flow_map(batch_images, batch_las_images)
 
         os.makedirs("./debug/train/images", exist_ok=True)
-        bcm = batch_change_map[0]
-        bfm = batch_flow_map[0]
-        bhm = batch_hsv_map[0]
+        os.makedirs("./debug/train/text", exist_ok=True)
+        bcm = batch_change_map[0][0]
+        bfm = batch_flow_map[0][0]
+        bhm = batch_hsv_map[0][0]
 
-        _to_uint8_img(bcm).save(f"./debug/images/bcm_{self.step}.png")
-        _to_uint8_img(bfm).save(f"./debug/images/bfm_{self.step}.png")
-        _to_uint8_img(bhm).save(f"./debug/images/bhm_{self.step}.png")
+        _to_uint8_img(bcm).save(f"./debug/train/images/bcm_{self.step}.png")
+        _to_uint8_img(bfm).save(f"./debug/train/images/bfm_{self.step}.png")
+        _to_uint8_img(bhm).save(f"./debug/train/images/bhm_{self.step}.png")
 
         # Calculate Memory Map Update Positions based on HSV brightness
         upd_poss = _calculate_update_positions(batch_hsv_map, self.map_x, self.map_y, self.image_size, self.memory_update_topk)
+        with open("./debug/train/text/upd_ppos_{self.step}.txt","w",encoding="utf-8") as f:
+            for i in range(len(upd_poss)):
+                f.write(",".join(map(str,upd_poss[i]))+"\n")
         # Step 2: QWenVL Inputs
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs_pro(
             images=batch_images, 
@@ -207,10 +209,11 @@ class Qwen_GR00TD(baseframework):
     
         # Step 1: QWenVL input format
 
-                
+
         batch_change_map, batch_flow_map, batch_hsv_map = build_change_flow_map(batch_images, batch_las_images)
         # Calculate Memory Map Update Positions based on HSV brightness
         upd_poss = _calculate_update_positions(batch_hsv_map, self.map_x, self.map_y, self.image_size, self.memory_update_topk)
+        print("finish data prepare",flush=True)
         # Step 2: QWenVL Inputs
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs_pro(
             images=batch_images, 
@@ -219,6 +222,7 @@ class Qwen_GR00TD(baseframework):
             flow_maps=batch_flow_map,
             instructions=instructions
         )
+        print("QwenForwarding",flush=True)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             # Step 3: Forward QwenVL
             qwenvl_outputs = self.qwen_vl_interface(
@@ -227,6 +231,7 @@ class Qwen_GR00TD(baseframework):
                 output_hidden_states=True,
                 return_dict=True,
             )
+            print("end of Forwarding",flush=True)
             last_hidden = qwenvl_outputs.hidden_states[-1]
             calc_hidden = last_hidden.mean(dim=1).float()
             memory = self.memory(
@@ -234,6 +239,7 @@ class Qwen_GR00TD(baseframework):
                 upd_poss=upd_poss,
                 update=False
             ).to(device=last_hidden.device, dtype=torch.float32)
+            print("memory",flush=True)
             last_hidden = torch.cat([last_hidden, memory.unsqueeze(1).to(dtype=last_hidden.dtype)], dim=1)
         state = None
         with torch.autocast("cuda", dtype=torch.float32):

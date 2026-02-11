@@ -1,3 +1,5 @@
+from typing import List, Tuple, Union, Any
+
 def auto_get_module_keys(module, max_depth=0, prefix_list=None, current_depth=0, current_prefix=""):
     """
     get all submodule keys of a module, support setting recursion depth and prefix list.
@@ -192,7 +194,7 @@ def _to_uint8_hwc3(img: Any) -> np.ndarray:
 def _compute_change_map(
     curr_bgr: np.ndarray,
     prev_bgr: np.ndarray,
-    top_ratio: float = 0.30,
+    top_ratio: float = 0.90,
     blur_ksize: int = 5,
     morph_open: bool = True,
     morph_ksize: int = 3,
@@ -209,17 +211,17 @@ def _compute_change_map(
     k = blur_ksize if blur_ksize % 2 == 1 else blur_ksize + 1
     if k >= 3:
         diff = cv2.GaussianBlur(diff, (k, k), 0)
-
-    # pick top 30% pixels by value (threshold at 70th percentile)
-    # handle edge cases
     flat = diff.reshape(-1)
-    if flat.size == 0:
-        return np.zeros_like(curr_g, dtype=np.uint8)
+    thr = np.max(flat) * (1.0 - top_ratio)
+    mask = (diff > thr).astype(np.uint8) * 255
+    # 调试代码，查看diff的统计信息
+    print(f"diff 统计: min={np.min(diff)}, max={np.max(diff)}, mean={np.mean(diff)}")
+    print(f"top_ratio={top_ratio}, thr={thr if 'thr' in locals() else '未计算'}")
 
-    thr = np.percentile(flat, 100.0 * (1.0 - top_ratio))
-    if thr < 2.0:
-        return np.zeros_like(curr_g, dtype=np.uint8)
-    mask = (diff >= thr).astype(np.uint8) * 255
+    # 检查有多少像素超过阈值
+    if 'thr' in locals():
+        num_over = np.sum(diff > thr)
+        print(f"超过阈值的像素数: {num_over}/{diff.size} ({num_over/diff.size*100:.2f}%)")
 
     # optional denoise
     if morph_open:
@@ -302,10 +304,10 @@ def _compute_flow_map(
 def build_change_flow_map(
     batch_images: List[List[Any]],        # [B, [P,L,T]] each view is image-like
     batch_las_images: List[List[Any]],    # [B, [P,L,T]] previous views
-    top_ratio: float = 0.20,
-    blur_ksize: int = 5,
+    top_ratio: float = 0.90,
+    blur_ksize: int = 3,
     morph_open: bool = True,
-) -> Tuple[List[List[np.ndarray]], List[List[np.ndarray]]]:
+):
     """
     Args:
     batch_images: current views, [B, V]
@@ -343,10 +345,8 @@ def build_change_flow_map(
             # curr = curr[..., ::-1]
             # prev = prev[..., ::-1]
 
-            change_map = _compute_change_map(
-                curr, prev, top_ratio=top_ratio, blur_ksize=blur_ksize,
-                morph_open=morph_open
-            )
+            change = _compute_change_map(curr, prev)
+            change_map = np.repeat(change[:, :, None], 3, axis=2).astype(np.uint8)
             flow_map, hsv_map = _compute_flow_map(curr, prev)
 
             cmaps_b.append(change_map)

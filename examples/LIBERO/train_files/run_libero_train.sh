@@ -28,17 +28,19 @@ run_id=libero4in1_Qwen3GR00TD_cotrain_v1
 
 export WANDB_API_KEY=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
 wandb login 
-export WANDB_MODE=disabled
 
 output_dir=${run_root_dir}/${run_id}
 mkdir -p ${output_dir}
 # mv this script to the output dir
 cp $0 ${output_dir}/
 
+# export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128
+
+
 
 accelerate launch \
-  --config_file starVLA/config/deepseeds/deepspeed_zero2.yaml \
-  --num_processes 4 \
+  --config_file starVLA/config/deepseeds/deepspeed_zero3.yaml \
+  --num_processes 8 \
   starVLA/training/train_starvla_cotrain.py \
   --config_yaml ${config_yaml} \
   --framework.name ${Framework_name} \
@@ -48,14 +50,14 @@ accelerate launch \
   --datasets.vla_data.per_device_batch_size 1 \
   --trainer.vla_data.video_backend torchvision_av \
   --trainer.freeze_modules ${freeze_module_list} \
-  --trainer.max_train_steps 100 \
+  --trainer.max_train_steps 300000 \
   --trainer.save_interval 10000 \
   --trainer.logging_frequency 100 \
   --trainer.eval_interval 100 \
   --run_root_dir ${run_root_dir} \
   --run_id ${run_id} \
   --wandb_project starVLA_Libero \
-  --wandb_entity deepkevin0122 \
+  --wandb_entity deepkevin0122-hong-kong-university-of-science-and-technology \
   # --is_debug True
 
 
