@@ -65,7 +65,6 @@ class MemoryMap(nn.Module):
         self.update = update
         batch_size = ext.shape[0]
         processed_ext = self._process_external_input(ext)
-        print("self.update", self.update, flush=True)
         if self.update:
             self._update_memory_dynamic(processed_ext, upd_poss)
             self.last_update_step += 1

@@ -214,16 +214,11 @@ def _compute_change_map(
     flat = diff.reshape(-1)
     thr = np.max(flat) * (1.0 - top_ratio)
     mask = (diff > thr).astype(np.uint8) * 255
-    # 调试代码，查看diff的统计信息
-    print(f"diff 统计: min={np.min(diff)}, max={np.max(diff)}, mean={np.mean(diff)}")
-    print(f"top_ratio={top_ratio}, thr={thr if 'thr' in locals() else '未计算'}")
-
-    # 检查有多少像素超过阈值
     if 'thr' in locals():
         num_over = np.sum(diff > thr)
-        print(f"超过阈值的像素数: {num_over}/{diff.size} ({num_over/diff.size*100:.2f}%)")
-
-    # optional denoise
+        ratio = num_over / diff.size
+        if ratio < 0.01:
+            return mask * 0.0
     if morph_open:
         mk = morph_ksize if morph_ksize % 2 == 1 else morph_ksize + 1
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (mk, mk))
