@@ -22,7 +22,7 @@ config_yaml=./examples/LIBERO/train_files/starvla_cotrain_libero.yaml
 libero_data_root=playground/Datasets/LEROBOT_LIBERO_DATA
 data_mix=libero_all
 run_root_dir=./results/Checkpoints
-run_id=libero4in1_Qwen3GR00TD_cotrain_v2
+run_id=libero4in1_Qwen3GR00TD_v2
 # === End of environment variable configuration ===
 ###########################################################################################
 
@@ -41,7 +41,7 @@ cp $0 ${output_dir}/
 accelerate launch \
   --config_file starVLA/config/deepseeds/deepspeed_zero3.yaml \
   --num_processes 8 \
-  starVLA/training/train_starvla_cotrain.py \
+  starVLA/training/train_starvla.py \
   --config_yaml ${config_yaml} \
   --framework.name ${Framework_name} \
   --framework.qwenvl.base_vlm ${base_vlm} \

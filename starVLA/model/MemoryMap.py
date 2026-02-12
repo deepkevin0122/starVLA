@@ -66,6 +66,7 @@ class MemoryMap(nn.Module):
             global_embedding: [B, memory_dim] 在ext注意力下的全局embedding
         """
         self.update = update
+        self.memory = self.memory.to(ext.device)
         processed_ext = self._process_external_input(ext)
         if self.update:
             self._update_memory_dynamic(processed_ext, upd_poss)
@@ -99,10 +100,10 @@ class MemoryMap(nn.Module):
         M = self.map_x * self.map_y
 
         delta = torch.zeros((M, self.memory_dim), device=device, dtype=self.dtype)
-        num = torch.zeros((M, 1), device=device, dtype=self.dtype)
+        num = torch.zeros((M, ), device=device, dtype=self.dtype)
         delta.index_add_(0, flat_indices, ext[val_indices, flat_indices])
         num.index_add_(0, flat_indices, torch.ones_like(flat_indices, dtype=torch.float))
-        delta = delta / torch.where(num > 0, num, torch.ones_like(num))
+        delta = delta / torch.where(num > 0, num, torch.ones_like(num)).unsqueeze(1)
 
         if dist.is_initialized():
             delta_d = delta.detach()
@@ -134,7 +135,7 @@ class MemoryMap(nn.Module):
 
         src = mem_in.permute(2, 0, 1).unsqueeze(0)
         
-        norm_factor = self.gnn_norm.clamp(min=1.0)
+        norm_factor = self.gnn_norm.clamp(min=1.0).to(src.device)
 
         for _ in range(K):
             neighbor_sum = F.conv2d(src, kernel, padding=1, groups=self.memory_dim)

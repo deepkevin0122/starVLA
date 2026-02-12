@@ -217,7 +217,6 @@ class VLAMTrainer(TrainerUtils):
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
                 f.write(json.dumps(summary_data) + "\n")
             self.accelerator.print(f"✅ Checkpoint saved at {checkpoint_path}")
-
             # ✅ Save accessed configuration only
             if isinstance(self.config, AccessTrackedConfig):
                 logger.info("📊 Saving accessed configuration...")
@@ -262,7 +261,6 @@ class VLAMTrainer(TrainerUtils):
         try:
             batch_vla = next(self.vla_iter)
         except StopIteration:
-            # check if there is self.vla_epoch_count
             if not hasattr(self, "vla_epoch_count"):
                 self.vla_epoch_count = 0
             self.vla_iter, self.vla_epoch_count = TrainerUtils._reset_dataloader(
@@ -359,11 +357,8 @@ class VLAMTrainer(TrainerUtils):
         # main training loop
         while self.completed_steps < self.config.trainer.max_train_steps:
             # get data batch
-            
             t_start_data = time.perf_counter()
             batch_vla, batch_vlm = self._get_next_batch()
-            #if self.completed_steps % 10 == 0:
-            #    self.save_batch_vla(batch_vla, "/dataset/vkevinzhao/code/starVLA/debug/start/", self.completed_steps)
             t_end_data = time.perf_counter()
             t_start_model = time.perf_counter()
             step_metrics = self._train_step(batch_vla, batch_vlm)
@@ -388,9 +383,7 @@ class VLAMTrainer(TrainerUtils):
             # record metrics
             step_metrics["data_time"] = t_end_data - t_start_data
             step_metrics["model_time"] = t_end_model - t_start_model
-            dist.barrier()
             self._log_metrics(step_metrics)
-            dist.barrier()
 
             # save checkpoint
             if self.completed_steps % self.config.trainer.save_interval == 0 and self.completed_steps > 0:
@@ -426,9 +419,7 @@ class VLAMTrainer(TrainerUtils):
         output_dict = self.model.predict_action(
             examples=examples
         )
-
         normalized_actions = output_dict["normalized_actions"]  # B, T, D
-
         actions = np.array(actions)  # convert actions to numpy.ndarray
         # B, Chunk, dim = actions.shape
         num_pots = np.prod(actions.shape)
@@ -460,9 +451,8 @@ class VLAMTrainer(TrainerUtils):
                 output_dict = self.model.forward(batch_vla)
                 action_loss = output_dict["action_loss"]
                 memory_loss = output_dict["memory_loss"]
-                total_loss = action_loss * self.config.trainer.loss_scale.vla + memory_loss * self.config.trainer.loss_scale.memory
-            if self.config.trainer.loss_scale.vla > 0.0:
-                self.accelerator.backward(total_loss)
+                total_loss = action_loss * self.config.trainer.loss_scale.vla + memory_loss * self.config.trainer.loss_scale.memory            if self.config.trainer.loss_scale.vla > 0.0:
+            self.accelerator.backward(total_loss)
             pass
             # VLM task forward propagation
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):

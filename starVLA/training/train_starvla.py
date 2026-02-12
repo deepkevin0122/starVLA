@@ -49,8 +49,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 # Initialize Overwatch =>> Wraps `logging.Logger`
-from accelerate.logging import get_logger
-
 logger = get_logger(__name__)
 
 
@@ -218,15 +216,10 @@ class VLATrainer(TrainerUtils):
 
     def _save_checkpoint(self):
         """save current training state"""
-
+        self.accelerator.wait_for_everyone()
+        checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
+        self.accelerator.save_state(checkpoint_path)
         if self.accelerator.is_main_process:
-
-            checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
-            # save model state
-            state_dict = self.accelerator.get_state_dict(self.model)
-            torch.save(state_dict, checkpoint_path + "_pytorch_model.pt")
-
-            # save training metadata
             summary_data = {
                 "steps": self.completed_steps,
             }
@@ -360,19 +353,17 @@ class VLATrainer(TrainerUtils):
         output_dict = self.model.predict_action(
             examples=examples, use_ddim=True, num_ddim_steps=20
         )
-
-        if self.accelerator.is_main_process:
-            normalized_actions = output_dict["normalized_actions"]  # B, T, D
-            actions = np.array(actions)  # convert actions to numpy.ndarray
-            # B, Chunk, dim = actions.shape
-            num_pots = np.prod(actions.shape)
-            # Compute the metric score
-            score = TrainerUtils.euclidean_distance(normalized_actions, actions)
-            average_score = score / num_pots
-            step_metrics["mse_score"] = average_score
+        normalized_actions = output_dict["normalized_actions"]  # B, T, D
+        actions = np.array(actions)  # convert actions to numpy.ndarray
+        # B, Chunk, dim = actions.shape
+        num_pots = np.prod(actions.shape)
+        # Compute the metric score
+        score = TrainerUtils.euclidean_distance(normalized_actions, actions)
+        average_score = score / num_pots
+        step_metrics["mse_score"] = average_score
 
         del examples
-        dist.barrier()  # ensure all processes are synchronized
+        dist.barrier()
         return step_metrics
 
     def _log_training_config(self):
@@ -392,11 +383,9 @@ class VLATrainer(TrainerUtils):
             # VLA task forward propagation
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
-
                 action_loss = output_dict["action_loss"]
-                total_loss = action_loss
-
-            # VLA backward propagation
+                memory_loss = output_dict["memory_loss"]
+                total_loss = action_loss * self.config.trainer.loss_scale.vla + memory_loss * self.config.trainer.loss_scale.memory
             self.accelerator.backward(total_loss)
 
             # gradient clipping
@@ -409,6 +398,7 @@ class VLATrainer(TrainerUtils):
 
         return {
             "action_dit_loss": action_loss.item(),
+            "memory_loss": memory_loss.item(),
         }
 
     def _finalize_training(self):

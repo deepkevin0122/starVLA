@@ -74,9 +74,9 @@ class Qwen_GR00TD(baseframework):
         self.config = config
         self.qwen_vl_interface = get_vlm_model(config=self.config)
         # align dims --> we should put them to config or no?
-        self.action_model: FlowmatchingActionHead = get_action_model(config=self.config)  # 修复后续引用
         self.hidden_dim = self.qwen_vl_interface.model.config.hidden_size
         self.config.framework.action_model.diffusion_model_cfg.cross_attention_dim = self.hidden_dim
+        self.action_model: FlowmatchingActionHead = get_action_model(config=self.config)
 
         self.future_action_window_size = config.framework.action_model.future_action_window_size
         self.past_action_window_size = config.framework.action_model.past_action_window_size
@@ -99,7 +99,7 @@ class Qwen_GR00TD(baseframework):
         self.memory_film_gamma = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.memory_film_beta = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.linear_action_pred = nn.Linear(
-            2 * self.hidden,
+            2 * self.hidden_dim,
             self.config.framework.action_model.get("action_dim", 7)
         )
         self.step = 0
@@ -127,21 +127,21 @@ class Qwen_GR00TD(baseframework):
         batch_change_map, batch_flow_map, batch_hsv_map = build_change_flow_map(batch_images, batch_las_images)
         # Calculate Memory Map Update Positions based on HSV brightness
         upd_poss = _calculate_update_positions(batch_hsv_map, self.map_x, self.map_y, self.image_size, self.memory_update_topk)
-"""
-        os.makedirs("./debug/train/images", exist_ok=True)
-        os.makedirs("./debug/train/text", exist_ok=True)
-        bcm = batch_change_map[0][0]
-        bfm = batch_flow_map[0][0]
-        bhm = batch_hsv_map[0][0]
 
-        _to_uint8_img(bcm).save(f"./debug/train/images/bcm_{self.step}.png")
-        _to_uint8_img(bfm).save(f"./debug/train/images/bfm_{self.step}.png")
-        _to_uint8_img(bhm).save(f"./debug/train/images/bhm_{self.step}.png")
+        # os.makedirs("./debug/train/images", exist_ok=True)
+        # os.makedirs("./debug/train/text", exist_ok=True)
+        # bcm = batch_change_map[0][0]
+        # bfm = batch_flow_map[0][0]
+        # bhm = batch_hsv_map[0][0]
 
-        with open("./debug/train/text/upd_ppos_{self.step}.txt","w",encoding="utf-8") as f:
-            for i in range(len(upd_poss)):
-                f.write(",".join(map(str,upd_poss[i]))+"\n")
-"""
+        # _to_uint8_img(bcm).save(f"./debug/train/images/bcm_{self.step}.png")
+        # _to_uint8_img(bfm).save(f"./debug/train/images/bfm_{self.step}.png")
+        # _to_uint8_img(bhm).save(f"./debug/train/images/bhm_{self.step}.png")
+
+        # with open("./debug/train/text/upd_ppos_{self.step}.txt","w",encoding="utf-8") as f:
+        #     for i in range(len(upd_poss)):
+        #         f.write(",".join(map(str,upd_poss[i]))+"\n")
+
         # Step 2: QWenVL Inputs
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs_pro(
             images=batch_images, 
@@ -168,7 +168,7 @@ class Qwen_GR00TD(baseframework):
             map_x, map_y = self.map_x, self.map_y
 
             # MultiheadAttention 要求 (seq_len, batch, embed_dim)
-            memory_calc = memory_calc.unsqueeze(1).expand(-1, B, -1)  # [map_x*map_y, B, D]
+            memory_calc = memory_calc.unsqueeze(1).expand(-1, B, -1).to(last_hidden.device)  # [map_x*map_y, B, D]
             last_hidden_t = last_hidden.transpose(0,1)               # [T, B, D]
             calc_hidden, _ = self.attn_output(
                 query=memory_calc,
