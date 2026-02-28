@@ -221,8 +221,11 @@ class VLATrainer(TrainerUtils):
         """save current training state"""
         self.accelerator.wait_for_everyone()
         checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
-        self.accelerator.save_state(checkpoint_path)
+        # self.accelerator.save_state(checkpoint_path)
         if self.accelerator.is_main_process:
+            os.makedirs(checkpoint_path, exist_ok=True)
+            state_dict = self.accelerator.get_state_dict(self.model)
+            torch.save(state_dict, os.path.join(checkpoint_path, "pytorch_model.pt"))
             summary_data = {
                 "steps": self.completed_steps,
             }
