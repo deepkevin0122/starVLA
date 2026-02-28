@@ -36,10 +36,15 @@ framework:
     memory_map_x_size: 4
     memory_map_y_size: 4
     memory_update_topk: 4
-    memory_dropout: 0.1
     memory_update_rate: 0.5
     memory_gnn_update_rate: 0.05
-
+    use_memory: true
+    update_memory: true
+    train_last_action: true
+    change_map: true
+    flow_map: true
+    conbine_film: "residual"
+    
     diffusion_model_cfg:    # DiT Transformers 的参数
       cross_attention_dim: 2048 # VLM 的 dim
       dropout: 0.2

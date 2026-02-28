@@ -85,12 +85,17 @@ class Qwen_GR00TD(baseframework):
         self.map_x = self.config.framework.action_model.get("memory_map_x_size", 4)
         self.map_y = self.config.framework.action_model.get("memory_map_y_size", 4) 
         self.memory_update_topk = self.config.framework.action_model.get("memory_update_topk", 4)
+        self.use_memory = self.config.framework.action_model.get("use_memory", True)
+        self.update_memory = self.config.framework.action_model.get("update_memory", True)
+        self.train_last_action = self.config.framework.action_model.get("train_last_action", True)
+        self.change_map =self.config.framework.action_model.get("change_map", True)
+        self.flow_map = self.config.framework.action_model.get("flow_map", True)
+        self.conbine_film = self.config.framework.action_model.get("combine_film", "normal")
         self.memory = MemoryMap(
             map_x=self.map_x,
             map_y=self.map_y,
             memory_dim=self.hidden_dim,
             update_rate=self.config.framework.action_model.get("memory_update_rate", 0.5),
-            drop_rate=self.config.framework.action_model.get("memory_dropout", 0.1),
             gnn_update_rate=self.config.framework.action_model.get("memory_gnn_update_rate", 0.05),
             dtype=torch.float32
         )
@@ -125,22 +130,13 @@ class Qwen_GR00TD(baseframework):
         actions = [example["action"] for example in examples]  # label [B， len, 7]
         # Step 1: Build Change Map and FlowMap
         batch_change_map, batch_flow_map, batch_hsv_map = build_change_flow_map(batch_images, batch_las_images)
+        if self.change_map == False:
+            batch_change_map = [[np.zeros_like(batch_change_map[0][0]) for _ in range(len(batch_change_map[__]))] for __ in range(len(batch_change_map))]
+        if self.flow_map == False:
+            batch_flow_map = [[np.zeros_like(batch_flow_map[0][0]) for _ in range(len(batch_flow_map[__]))] for __ in range(len(batch_flow_map))]
+
         # Calculate Memory Map Update Positions based on HSV brightness
         upd_poss = _calculate_update_positions(batch_hsv_map, self.map_x, self.map_y, self.image_size, self.memory_update_topk)
-
-        # os.makedirs("./debug/train/images", exist_ok=True)
-        # os.makedirs("./debug/train/text", exist_ok=True)
-        # bcm = batch_change_map[0][0]
-        # bfm = batch_flow_map[0][0]
-        # bhm = batch_hsv_map[0][0]
-
-        # _to_uint8_img(bcm).save(f"./debug/train/images/bcm_{self.step}.png")
-        # _to_uint8_img(bfm).save(f"./debug/train/images/bfm_{self.step}.png")
-        # _to_uint8_img(bhm).save(f"./debug/train/images/bhm_{self.step}.png")
-
-        # with open("./debug/train/text/upd_ppos_{self.step}.txt","w",encoding="utf-8") as f:
-        #     for i in range(len(upd_poss)):
-        #         f.write(",".join(map(str,upd_poss[i]))+"\n")
 
         # Step 2: QWenVL Inputs
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs_pro(
@@ -161,49 +157,64 @@ class Qwen_GR00TD(baseframework):
             last_hidden = qwenvl_outputs.hidden_states[-1]
 
         with torch.autocast("cuda", dtype=torch.float32):
-            # recalc
-            # memory token
-            memory_calc = self.memory.get_memory()  # [map_x*map_y, D]
-            B, T, D = last_hidden.size()
-            map_x, map_y = self.map_x, self.map_y
+            if self.use_memory:
+                # recalc
+                # memory token
+                memory_calc = self.memory.get_memory()  # [map_x*map_y, D]
+                B, T, D = last_hidden.size()
+                map_x, map_y = self.map_x, self.map_y
 
-            # MultiheadAttention 要求 (seq_len, batch, embed_dim)
-            memory_calc = memory_calc.unsqueeze(1).expand(-1, B, -1).to(last_hidden.device)  # [map_x*map_y, B, D]
-            last_hidden_t = last_hidden.transpose(0,1)               # [T, B, D]
-            calc_hidden, _ = self.attn_output(
-                query=memory_calc,
-                key=last_hidden_t,
-                value=last_hidden_t
-            )  # [map_x*map_y, B, D]
+                # MultiheadAttention 要求 (seq_len, batch, embed_dim)
+                memory_calc = memory_calc.unsqueeze(1).expand(-1, B, -1).to(last_hidden.device)  # [map_x*map_y, B, D]
+                last_hidden_t = last_hidden.transpose(0,1)               # [T, B, D]
+                calc_hidden, _ = self.attn_output(
+                    query=memory_calc,
+                    key=last_hidden_t,
+                    value=last_hidden_t
+                )  # [map_x*map_y, B, D]
 
-            # 转回 batch first
-            calc_hidden = calc_hidden.transpose(0,1)  # [B, map_x*map_y, D]
+                # 转回 batch first
+                calc_hidden = calc_hidden.transpose(0,1)  # [B, map_x*map_y, D]
 
-            memory = self.memory(
-                ext=calc_hidden,
-                upd_poss=upd_poss,
-                update=True
-            ).to(device=last_hidden.device, dtype=torch.float32) # # [B, map_x*map_y, D]
+                memory = self.memory(
+                    ext=calc_hidden,
+                    upd_poss=upd_poss,
+                    update=self.update_memory
+                ).to(device=last_hidden.device, dtype=torch.float32) # # [B, map_x*map_y, D]
 
-            memory_with_pos = memory + self.pos_embed.unsqueeze(0).to(memory.device)
-            memory_pool = memory_with_pos.mean(dim=1)
-            
-            # FiLM 生成 gamma 和 beta
-            gamma = self.memory_film_gamma(memory_pool).unsqueeze(1).to(last_hidden.device)  # [B, 1, D]
-            beta  = self.memory_film_beta(memory_pool).unsqueeze(1).to(last_hidden.device)   # [B, 1, D]
-            last_hidden_mod = last_hidden * gamma + beta  # [B, T, D]
+                memory_with_pos = memory + self.pos_embed.unsqueeze(0).to(memory.device)
+                memory_pool = memory_with_pos.mean(dim=1)
+                if self.conbine_film == "normal":
+                    gamma = self.memory_film_gamma(memory_pool).unsqueeze(1).to(last_hidden.device)  # [B, 1, D]
+                    beta  = self.memory_film_beta(memory_pool).unsqueeze(1).to(last_hidden.device)   # [B, 1, D]
+                    last_hidden_mod = last_hidden * gamma + beta  # [B, T, D]
+                elif self.conbine_film == "residual":
+                    memory_t = memory_with_pos.transpose(0,1) 
+                    last_hidden_t = last_hidden.transpose(0,1)
+                    memory_context, _ = self.attn_output(
+                        query=last_hidden_t,
+                        key=memory_t,
+                        value=memory_t
+                    )
+                    memory_context = memory_context.transpose(0,1)
+                    last_hidden_mod = last_hidden + memory_context
+                elif self.conbine_film == "none":
+                    last_hidden_mod = last_hidden
+                if self.train_last_action:
+                    calc_hidden_pos = calc_hidden + self.pos_embed.unsqueeze(0).to(calc_hidden.device)
+                    calc_pool = calc_hidden_pos.mean(dim=1)
 
-            calc_hidden_pos = calc_hidden + self.pos_embed.unsqueeze(0).to(calc_hidden.device)
-            calc_pool = calc_hidden_pos.mean(dim=1)
+                    batch_las_action = torch.tensor(np.array(batch_las_action), device=last_hidden.device, dtype=torch.float32)
+                    batch_las_action = batch_las_action[:, -(self.future_action_window_size+1), :] 
 
-            batch_las_action = torch.tensor(np.array(batch_las_action), device=last_hidden.device, dtype=torch.float32)
-            batch_las_action = batch_las_action[:, -(self.future_action_window_size+1), :] 
-
-            concat_feat = torch.cat([calc_pool, memory_pool], dim=-1) 
-            las_action_pred = self.linear_action_pred(concat_feat) 
-            las_action_loss = F.l1_loss(las_action_pred, batch_las_action).float()
-
-            
+                    concat_feat = torch.cat([calc_pool, memory_pool], dim=-1) 
+                    las_action_pred = self.linear_action_pred(concat_feat) 
+                    las_action_loss = F.l1_loss(las_action_pred, batch_las_action).float()
+                else:
+                    las_action_loss = torch.tensor(0.0, device=last_hidden.device)
+            else:
+                last_hidden_mod = last_hidden
+                las_action_loss = torch.tensor(0.0, device=last_hidden.device)
 
             actions = torch.tensor(np.array(actions), device=last_hidden.device, dtype=last_hidden.dtype)
             actions_target = actions[:, -(self.future_action_window_size+1):, :]
@@ -216,7 +227,6 @@ class Qwen_GR00TD(baseframework):
             state_repeated = None
 
             action_loss = self.action_model(last_hidden_repeated, actions_target_repeated, state_repeated)
-        # Step 7: Return Losses
         return {"action_loss": action_loss, "memory_loss": las_action_loss}
 
     @torch.inference_mode()
@@ -248,6 +258,10 @@ class Qwen_GR00TD(baseframework):
         # Calculate Memory Map Update Positions based on HSV brightness
         upd_poss = _calculate_update_positions(batch_hsv_map, self.map_x, self.map_y, self.image_size, self.memory_update_topk)
         # Step 2: QWenVL Inputs
+        if self.change_map == False:
+            batch_change_map = [[np.zeros_like(batch_change_map[0][0]) for _ in range(len(batch_change_map[__]))] for __ in range(len(batch_change_map))]
+        if self.flow_map == False:
+            batch_flow_map = [[np.zeros_like(batch_flow_map[0][0]) for _ in range(len(batch_flow_map[__]))] for __ in range(len(batch_flow_map))]
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs_pro(
             images=batch_images, 
             action_keys=action_keys, 
@@ -266,35 +280,50 @@ class Qwen_GR00TD(baseframework):
             last_hidden = qwenvl_outputs.hidden_states[-1]
         state = None
         with torch.autocast("cuda", dtype=torch.float32):
-            memory_calc = self.memory.get_memory()  # [map_x*map_y, D]
-            B, T, D = last_hidden.size()
-            map_x, map_y = self.map_x, self.map_y
+            if self.use_memory:
+                # recalc
+                # memory token
+                memory_calc = self.memory.get_memory()  # [map_x*map_y, D]
+                B, T, D = last_hidden.size()
 
-            # MultiheadAttention 要求 (seq_len, batch, embed_dim)
-            memory_calc = memory_calc.unsqueeze(1).expand(-1, B, -1)  # [map_x*map_y, B, D]
-            last_hidden_t = last_hidden.transpose(0,1)               # [T, B, D]
-            calc_hidden, _ = self.attn_output(
-                query=memory_calc,
-                key=last_hidden_t,
-                value=last_hidden_t
-            )  # [map_x*map_y, B, D]
+                # MultiheadAttention 要求 (seq_len, batch, embed_dim)
+                memory_calc = memory_calc.unsqueeze(1).expand(-1, B, -1).to(last_hidden.device)  # [map_x*map_y, B, D]
+                last_hidden_t = last_hidden.transpose(0,1)               # [T, B, D]
+                calc_hidden, _ = self.attn_output(
+                    query=memory_calc,
+                    key=last_hidden_t,
+                    value=last_hidden_t
+                )  # [map_x*map_y, B, D]
 
-            # 转回 batch first
-            calc_hidden = calc_hidden.transpose(0,1)  # [B, map_x*map_y, D]
+                # 转回 batch first
+                calc_hidden = calc_hidden.transpose(0,1)  # [B, map_x*map_y, D]
 
-            memory = self.memory(
-                ext=calc_hidden,
-                upd_poss=upd_poss,
-                update=False
-            ).to(device=last_hidden.device, dtype=torch.float32) # # [B, map_x*map_y, D]
+                memory = self.memory(
+                    ext=calc_hidden,
+                    upd_poss=upd_poss,
+                    update=False
+                ).to(device=last_hidden.device, dtype=torch.float32) # # [B, map_x*map_y, D]
 
-            memory_with_pos = memory + self.pos_embed.unsqueeze(0).to(memory.device)
-            memory_pool = memory_with_pos.mean(dim=1)
-            
-            # FiLM 生成 gamma 和 beta
-            gamma = self.memory_film_gamma(memory_pool).unsqueeze(1).to(last_hidden.device)  # [B, 1, D]
-            beta  = self.memory_film_beta(memory_pool).unsqueeze(1).to(last_hidden.device)   # [B, 1, D]
-            last_hidden_mod = last_hidden * gamma + beta  # [B, T, D]
+                memory_with_pos = memory + self.pos_embed.unsqueeze(0).to(memory.device)
+                memory_pool = memory_with_pos.mean(dim=1)
+                if self.conbine_film == "normal":
+                    gamma = self.memory_film_gamma(memory_pool).unsqueeze(1).to(last_hidden.device)  # [B, 1, D]
+                    beta  = self.memory_film_beta(memory_pool).unsqueeze(1).to(last_hidden.device)   # [B, 1, D]
+                    last_hidden_mod = last_hidden * gamma + beta  # [B, T, D]
+                elif self.conbine_film == "residual":
+                    memory_t = memory_with_pos.transpose(0,1) 
+                    last_hidden_t = last_hidden.transpose(0,1)
+                    memory_context, _ = self.attn_output(
+                        query=last_hidden_t,
+                        key=memory_t,
+                        value=memory_t
+                    )
+                    memory_context = memory_context.transpose(0,1)
+                    last_hidden_mod = last_hidden + memory_context
+                elif self.conbine_film == "none":
+                    last_hidden_mod = last_hidden
+            else:
+                last_hidden_mod = last_hidden
 
             pred_actions = self.action_model.predict_action(last_hidden_mod, state)  # (B, chunk_len, action_dim)
         normalized_actions = pred_actions.detach().cpu().numpy()

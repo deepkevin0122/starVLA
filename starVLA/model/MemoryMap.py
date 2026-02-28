@@ -12,15 +12,13 @@ import torch.distributed as dist
 
 class MemoryMap(nn.Module):
     def __init__(self, map_x: int, map_y: int, memory_dim: int,
-                 update_rate: float = 0.1, drop_rate: float = 0.1, 
-                 gnn_update_rate: float = 0.05, 
+                 update_rate: float = 0.1, gnn_update_rate: float = 0.05, 
                  dtype=torch.float32):
         super().__init__()
         self.map_x = map_x
         self.map_y = map_y
         self.memory_dim = memory_dim
         self.update_rate = update_rate
-        self.drop_rate = drop_rate
         self.gnn_update_rate = gnn_update_rate
         self.dtype = dtype
         self.norm_ext = nn.LayerNorm(memory_dim, dtype=dtype)

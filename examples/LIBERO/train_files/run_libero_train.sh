@@ -3,10 +3,10 @@
 eval "$(conda shell.bash hook)"
 conda activate starVLA
 
-# export NCCL_SOCKET_IFNAME=bond0
-# export NCCL_IB_HCA=mlx5_2,mlx5_3
-export NCCL_SOCKET_IFNAME=eth0
-export NCCL_IB_DISABLE=1
+export NCCL_SOCKET_IFNAME=bond0
+export NCCL_IB_HCA=mlx5_2,mlx5_3
+# export NCCL_SOCKET_IFNAME=eth0
+# export NCCL_IB_DISABLE=1
 
 # used for check save when communication
 export NCCL_BLOCKING_WAIT=1
@@ -22,7 +22,7 @@ config_yaml=./examples/LIBERO/train_files/starvla_cotrain_libero.yaml
 libero_data_root=playground/Datasets/LEROBOT_LIBERO_DATA
 data_mix=libero_all
 run_root_dir=./results/Checkpoints
-run_id=libero4in1_Qwen3GR00TD_v2
+run_id=libero4in1_Qwen3GR00TD_v2_H800
 # === End of environment variable configuration ===
 ###########################################################################################
 
@@ -45,12 +45,12 @@ accelerate launch \
   --config_yaml ${config_yaml} \
   --framework.name ${Framework_name} \
   --framework.qwenvl.base_vlm ${base_vlm} \
-  --datasets.vla_data.data_root_dir ${libero_data_root}\
+  --datasets.vla_data.data_root_dir ${libero_data_root} \
   --datasets.vla_data.data_mix ${data_mix} \
-  --datasets.vla_data.per_device_batch_size 1 \
+  --datasets.vla_data.per_device_batch_size 32 \
   --trainer.vla_data.video_backend torchvision_av \
   --trainer.freeze_modules ${freeze_module_list} \
-  --trainer.max_train_steps 1000000 \
+  --trainer.max_train_steps 500000 \
   --trainer.save_interval 10000 \
   --trainer.logging_frequency 100 \
   --trainer.eval_interval 100 \
@@ -58,24 +58,3 @@ accelerate launch \
   --run_id ${run_id} \
   --wandb_project starVLA_Libero \
   --wandb_entity deepkevin0122-hong-kong-university-of-science-and-technology \
-  # --is_debug True
-
-
-
-##### Multi-Server Multi-GPU training script #####
-  # accelerate launch \
-  #   --config_file starVLA/config/deepseeds/deepspeed_zero2.yaml \
-  #   --main_process_ip $MASTER_ADDR \
-  #   --main_process_port $MASTER_PORT \
-  #   --machine_rank $SLURM_PROCID \
-  #   --num_machines $SLURM_NNODES \
-  #   --num_processes=${TOTAL_GPUS} \
-  #   starVLA/training/train_starvla.py \
-  #   --config_yaml ${config_yaml} \
-  #   --framework.name ${Framework_name} \
-  #   --framework.qwenvl.base_vlm ${base_vlm} \
-  #   --run_root_dir ${run_root_dir} \
-  #   --run_id ${run_id} \
-  #   --wandb_project your_project \
-  #   --wandb_entity your_name
-##### Multi-Server Multi-GPU training script #####

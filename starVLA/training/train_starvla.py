@@ -95,7 +95,8 @@ def prepare_data(cfg, accelerator, output_dir) -> Tuple[DataLoader, DataLoader]:
     vla_train_dataloader = build_dataloader(cfg=cfg, dataset_py=cfg.datasets.vla_data.dataset_py)
 
     accelerator.dataloader_config.dispatch_batches = False
-    dist.barrier()
+    logger.info(f"Finish Data Prepare")
+    # dist.barrier()
 
     return vla_train_dataloader
 
@@ -149,6 +150,7 @@ class VLATrainer(TrainerUtils):
 
         # load pretrained weights
         if hasattr(self.config.trainer, "pretrained_checkpoint") and self.config.trainer.pretrained_checkpoint:
+            print("🔄 Loading pretrained weights from checkpoint...")
             pretrained_checkpoint = self.config.trainer.pretrained_checkpoint
             reload_modules = (
                 self.config.trainer.reload_modules if hasattr(self.config.trainer, "reload_modules") else None
@@ -207,6 +209,7 @@ class VLATrainer(TrainerUtils):
 
         # resume train ckpt
         if pretrained_checkpoint and is_resume:
+            print("🔄 Resuming training from checkpoint...")
             self._load_checkpoint(self.config.resume_from_checkpoint)
 
     def _load_checkpoint(self, checkpoint_path):
@@ -435,6 +438,7 @@ def main(cfg) -> None:
 
     # set optimizer and scheduler
     optimizer, lr_scheduler = setup_optimizer_and_scheduler(model=vla, cfg=cfg)
+    logger.info(f"Set Done")
 
     # create trainer
     # Run VLA Training
@@ -446,9 +450,11 @@ def main(cfg) -> None:
         lr_scheduler=lr_scheduler,
         accelerator=accelerator,
     )
+    logger.info(f"Set Done")
 
     # execute training preparation
     trainer.prepare_training()
+    logger.info(f"Prepare Done")
     # execute training
     trainer.train()
 
