@@ -31,8 +31,7 @@ wandb login
 
 run_root_dir=./results/Checkpoints
 
-
-run_id=libero4in1_Qwen3GR00TD_H800_baseline
+run_id=libero4in1_Qwen3GR00TD_H800_model
 output_dir=${run_root_dir}/${run_id}
 mkdir -p ${output_dir}
 cp $0 ${output_dir}/
@@ -43,16 +42,16 @@ accelerate launch \
   --config_yaml ${config_yaml} \
   --framework.name ${Framework_name} \
   --framework.qwenvl.base_vlm ${base_vlm} \
-  --framework.action_model.memory_map_x_size 4 \
-  --framework.action_model.memory_map_y_size 4 \
-  --framework.action_model.memory_map_update_topk 4 \
+  --framework.action_model.memory_map_x_size 8 \
+  --framework.action_model.memory_map_y_size 8 \
+  --framework.action_model.memory_map_update_topk 16 \
   --framework.action_model.memory_update_rate 0.2 \
-  --framework.action_model.use_memory false \
-  --framework.action_model.update_memory false \
-  --framework.action_model.train_last_action false \
+  --framework.action_model.use_memory true \
+  --framework.action_model.update_memory true \
+  --framework.action_model.train_last_action true \
   --framework.action_model.change_map false \
   --framework.action_model.flow_map false \
-  --framework.action_model.hsv false \
+  --framework.action_model.hsv true \
   --framework.action_model.repeated_diffusion_steps 8 \
   --datasets.vla_data.data_root_dir ${libero_data_root} \
   --datasets.vla_data.data_mix ${data_mix} \

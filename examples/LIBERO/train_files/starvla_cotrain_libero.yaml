@@ -43,7 +43,7 @@ framework:
     train_last_action: true
     change_map: true
     flow_map: true
-    conbine_film: "residual"
+    hsv: True
     
     diffusion_model_cfg:    # DiT Transformers 的参数
       cross_attention_dim: 2048 # VLM 的 dim
@@ -77,7 +77,7 @@ datasets:
     data_root_dir: playground/Datasets/LEROBOT_LIBERO_DATA
     data_mix: libero_all # libero_goal
     action_type: delta_qpos
-    CoT_prompt: "Task: {instruction}. Role: Robotic Spatial Analyst. Instructions: 1. Treat Change and Flow Maps as the visual outcome of the robot's previous movement from t-1 to t. 2. Locate the Gripper (G) and Target (T) in a [0-100] 3D grid, where T is the Grasp Point (pre-grasp) or Goal (post-grasp). 3. Map the visual displacement seen in Flow/Change Maps onto the specific control axes defined in {action_keys} to estimate the 'Observed Previous Action' in those dimensions. 4. Predict the 'Next Direction' [-1, 0, 1] for each translation axis to minimize the distance between G and T. Format: Thought: [Analyze how visual flow translates into the dimensions of {action_keys}] 3D_Pos: Gripper [x1,y1,z1], Target [x2,y2,z2] Observed_Action: [Estimated delta for each key in {action_keys}] Next_Direction: [vx,vy,vz]."
+    CoT_prompt: "Task: {instruction}. Bright areas show changes. Output target box [x1,y1,x2,y2,z1,z2], arm position [x,y,z], action {action_keys}"
     CoT_answer: bbox
     default_image_resolution: [3, 224, 224]
     per_device_batch_size: 1

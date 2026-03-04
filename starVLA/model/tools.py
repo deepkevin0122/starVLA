@@ -372,6 +372,53 @@ def _calculate_update_positions(batch_hsv_map, map_x, map_y, image_size, memory_
         upd_poss.append(upd_pos)
     return upd_poss
 
+def _modify_batch_maps(batch_images, batch_hsv_maps, min_brightness=0.3):
+    """
+    根据HSV亮度调制原图：亮度越高的地方越亮，其他地方保持基础亮度
+    
+    Args:
+        batch_images: list of list of images [B, T, H, W, C]
+        batch_hsv_maps: list of list of HSV maps [B, T, H, W, 3]
+        min_brightness: 最小亮度系数 (0-1)，保证暗处也能看清
+    
+    Returns:
+        modulated_images: 调制后的图像
+    """
+    modulated_batch = []
+    
+    for imgs, hsv_maps in zip(batch_images, batch_hsv_maps):
+        modulated_sequence = []
+        
+        for img, hsv in zip(imgs, hsv_maps):
+            # 转换图像到numpy
+            if hasattr(img, 'convert'):  # PIL Image
+                img_np = np.array(img.convert('RGB')).astype(np.float32)
+            else:
+                img_np = np.array(img).astype(np.float32)
+            
+            # 获取HSV亮度通道 (V)
+            hsv_np = np.array(hsv)
+            brightness = hsv_np[:, :, 2].astype(np.float32) / 255.0  # [0, 1]
+            
+            # 亮度调制系数：保证最小亮度，同时根据HSV亮度增强
+            brightness_factor = min_brightness + (1 - min_brightness) * brightness
+            brightness_factor = brightness_factor[:, :, np.newaxis]  # [H, W, 1]
+            
+            # 调制图像
+            modulated = img_np * brightness_factor
+            modulated = np.clip(modulated, 0, 255).astype(np.uint8)
+            
+            # 转回PIL（如果输入是PIL）
+            if hasattr(img, 'convert'):
+                from PIL import Image
+                modulated = Image.fromarray(modulated)
+            
+            modulated_sequence.append(modulated)
+        
+        modulated_batch.append(modulated_sequence)
+    
+    return modulated_batch
+
 
 from starVLA.training.trainer_utils import initialize_overwatch
 import os

@@ -168,7 +168,7 @@ class _QWen3_VL_Interface(nn.Module):
             batch_inputs['labels'] = labels
 
         return batch_inputs.to(self.model.device)
-    def build_qwenvl_inputs_pro(self, images, action_keys, change_maps, flow_maps, instructions, solutions=None, **kwargs):
+    def build_qwenvl_inputs_pro(self, images, action_keys, instructions, change_maps=None, flow_maps=None, solutions=None, **kwargs):
         """
         Build model inputs from raw data (images + instructions + optional solutions).
         Follow Oficial Qwen3-VL Instruct format: https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct
@@ -177,12 +177,20 @@ class _QWen3_VL_Interface(nn.Module):
         # Create messages: one message per sample
         messages = []
         assert len(images) == len(instructions), "Images and instructions must have the same length"
+        if change_maps == None:
+            change_maps = [None] * len(images)
+        if flow_maps == None:
+            flow_maps = [None] * len(images)
         for imgs, instruction, action_key, chgmps, flwmps, in zip(images, instructions, action_keys, change_maps, flow_maps):
             content = []
-            for img, chgmp, flwmp in zip(imgs, chgmps, flwmps):
+            for img in imgs:
                 content.append({"type": "image", "image": img})
-                content.append({"type": "image", "image": chgmp})
-                content.append({"type": "image", "image": flwmp})
+            if chgmps is not None:
+                for chgmp in chgmps:
+                    content.append({"type": "image", "image": chgmp})
+            if flwmps is not None:
+                for flwmp in flwmps:
+                    content.append({"type": "image", "image": flwmp})
 
             if "CoT_prompt" in self.config.datasets.vla_data:  # If using a grounding prompt to task
                 prompt = self.config.datasets.vla_data.get("CoT_prompt", "")

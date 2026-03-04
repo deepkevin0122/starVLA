@@ -78,8 +78,6 @@ class MemoryMap(nn.Module):
         处理外部输入，调整到 memory_dim 维度并添加梯度约束。
         """
         processed = torch.tanh(self.input_norm(ext))
-        if self.update:
-            processed.register_hook(lambda grad: torch.clamp(grad, -0.1, 0.1))
         return processed.to(ext.device)
     
 
@@ -156,8 +154,6 @@ class MemoryMap(nn.Module):
         t = self.temperature.clamp(min=0.01)
         similarity = torch.matmul(queries_norm, memory_norm.T) * t
         attention_weights = F.softmax(similarity, dim=-1)
-        if self.update:
-            attention_weights.register_hook(lambda grad: torch.clamp(grad, -0.1, 0.1))
         global_embedding = torch.matmul(attention_weights, self.memory.reshape(-1, self.memory_dim))
         
         return global_embedding
