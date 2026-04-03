@@ -1662,7 +1662,7 @@ class LeRobotMixtureDataset(Dataset):
                     
                     
                 data = dataset.transforms(dataset.get_step_data(trajectory_name, step))
-                step_gap = 1
+                step_gap = 8
                 if step < step_gap:
                     data_pre = data
                 else:
@@ -1693,30 +1693,15 @@ class LeRobotMixtureDataset(Dataset):
                     action.append(data[action_key])
                     if step < step_gap:
                         las_action.append(np.zeros_like(data[action_key]))
-                        las_action[-1][-1]=data[action_key][-1]
+                        if action_key == "action.gripper":
+                            las_action[-1]=data[action_key]
                     else:
                         las_action.append(data_pre[action_key])
                     action_keys.append(action_key)
                 action_keys = ", ".join(action_keys)
                 action = np.concatenate(action, axis=1).astype(np.float16)
                 las_action = np.concatenate(las_action, axis=1).astype(np.float16)
-                """
-                 state = []
-                 for state_key in dataset.modality_keys["state"]:
-                    state.append(data[state_key])
-                state = np.concatenate(state, axis=1).astype(np.float16)
-                """
                 state = None
-                """
-                if self.data_cfg is not None and self.data_cfg.get("include_state", False) not in ["False", False]:
-                    
-                    state = []
-                    for state_key in dataset.modality_keys["state"]:
-                        state.append(data[state_key])
-                    state = np.concatenate(state, axis=1).astype(np.float16)
-                    # prim_images
-                    return dict(action=action, image=all_images, lang=language, state=state)
-                """
                 return dict(action=action, las_action=las_action, action_keys=action_keys, image=all_images, las_image=all_las_images,lang=language)
                 
             except Exception as e:

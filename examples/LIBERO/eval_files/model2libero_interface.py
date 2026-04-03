@@ -107,6 +107,7 @@ class ModelClient:
             "do_sample": False,
             "use_ddim": self.use_ddim,
             "num_ddim_steps": self.num_ddim_steps,
+            "step" : step
         }
         
 

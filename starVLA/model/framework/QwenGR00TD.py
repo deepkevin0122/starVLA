@@ -22,8 +22,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from PIL import Image
 import os
+from PIL import Image
 import copy
 
 
@@ -42,7 +42,7 @@ from starVLA.model.modules.action_model.GR00T_ActionHeader import get_action_mod
 from starVLA.training.trainer_utils.trainer_tools import resize_images
 from starVLA.model.tools import FRAMEWORK_REGISTRY
 from starVLA.model.MemoryMap import MemoryMap
-from starVLA.model.tools import build_change_flow_map, _calculate_update_positions, _to_uint8_img, get_2d_sincos_pos_embed, _modify_batch_maps
+from starVLA.model.tools import build_change_flow_map, _calculate_update_positions, get_2d_sincos_pos_embed, _modify_batch_maps
 
 
 @FRAMEWORK_REGISTRY.register("QwenGR00TD")
@@ -92,7 +92,7 @@ class Qwen_GR00TD(baseframework):
         self.change_map =self.config.framework.action_model.get("change_map", True)
         self.flow_map = self.config.framework.action_model.get("flow_map", True)
         self.hsv = self.config.framework.action_model.get("hsv", True)
-        
+        self.las_image = None
         if self.use_memory:
             self.memory = MemoryMap(
                 map_x=self.map_x,
@@ -244,6 +244,7 @@ class Qwen_GR00TD(baseframework):
     def predict_action(
         self,
         examples: List[dict],
+        step = None,
         **kwargs: str,
     ) -> np.ndarray:
         """
@@ -258,6 +259,11 @@ class Qwen_GR00TD(baseframework):
         if type(examples) is not list:
             examples = [examples]
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
+        if isinstance(batch_images[0][0], np.ndarray):
+            batch_images = [[Image.fromarray(_) for _ in __] for __ in batch_images]
+        if step is not None and step == 0:
+           self.las_image = None
+        print(step)
         if "las_image" in examples[0]:
             batch_las_images = [example["las_image"] for example in examples]  
         else:
@@ -270,8 +276,7 @@ class Qwen_GR00TD(baseframework):
         if "action_keys" in examples[0]:
             action_keys = [example["action_keys"] for example in examples] # [B, str]
         else:
-            action_keys = ["[dx, dy, dz, droll, dpitch, dyaw, gripper]" for _ in range(len(examples))]
-    
+            action_keys = ["action.x, action.y, action.z, action.roll, action.pitch, action.yaw, action.gripper" for _ in range(len(examples))]
         with torch.no_grad():
             batch_change_map, batch_flow_map, batch_hsv_map = build_change_flow_map(
                 batch_images, batch_las_images
@@ -288,11 +293,12 @@ class Qwen_GR00TD(baseframework):
             )
             if self.hsv:
                 batch_images = _modify_batch_maps(batch_images, batch_hsv_map)
+                pass
             del batch_hsv_map
-        
-        # Calculate Memory Map Update Positions based on HSV brightness
-
         # Step 2: QWenVL Inputs
+        # Image.fromarray(np.array(batch_images[0][0])-np.array(batch_las_images[0][0])).save("debug.png")
+        # batch_images[0][0].save("debug.png")
+        # batch_las_images[0][0].save("debug_las.png")
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs_pro(
             images=batch_images,
             action_keys=action_keys, 
@@ -319,7 +325,7 @@ class Qwen_GR00TD(baseframework):
         # Step 4: Memory Processing (float32推理)
         with torch.autocast("cuda", dtype=torch.float32):
             B, T, D = last_hidden.shape
-            
+
             if self.use_memory:
                 memory_calc = self.memory.get_memory()  # [map_x*map_y, D]
                 map_size = memory_calc.shape[0]
@@ -365,79 +371,3 @@ class Qwen_GR00TD(baseframework):
         # 返回numpy数组
         normalized_actions = pred_actions.detach().cpu().numpy()
         return {"normalized_actions": normalized_actions}
-
-
-
-if __name__ == "__main__":
-    from omegaconf import OmegaConf
-    
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config_yaml", type=str, default="./examples/Robotwin/train_files/starvla_cotrain_robotwin.yaml", help="Path to YAML config")
-    args, clipargs = parser.parse_known_args()
-    # import debugpy  
-    # debugpy.listen(("0.0.0.0", 10092))
-    # print("🔍 Rank 0 waiting for debugger attach on port 10092...")
-    # debugpy.wait_for_client()
-
-    cfg = OmegaConf.load(args.config_yaml)
-    # try get model
-    # cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Qwen3-VL-4B-Instruct"
-    # cfg.framework.action_model.action_hidden_dim = 2048
-
-    # cfg.framework.qwenvl.base_vlm = "./playground/Pretrained_models/Florence-2-large"
-    
-
-    model: Qwen_GR00T = Qwen_GR00T(cfg)
-    print(model)
-
-
-
-    # fake sample 
-    image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
-    # Create a sample
-    sample = {
-        "action": np.random.uniform(-1, 1, size=(16, 14)).astype(np.float16), # action_chunk, action_dim
-        "image": [image], # three views
-        "lang": "Put all the toys in the child's room - the three board games (two on the bed and one on the table), the two jigsaw puzzles on the table, and the tennis ball on the table - inside the toy box on the table in the child's room.",
-        "state" : np.random.uniform(-1, 1, size=(1, 14)).astype(np.float16), # chunk, state_dim
-    }
-
-    batch  = [sample, sample]  # batch size 2
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)
-    forward_output = model(batch)
-    action_loss = forward_output['action_loss']
-    print(f"Action Loss: {action_loss.item()}")
-
-    # test predict action
-    predict_output = model.predict_action(examples=[sample]) #, state=[batch[0]["state"]]
-    normalized_actions = predict_output['normalized_actions']
-    print(f"Unnormalized Action: {normalized_actions}")
-
-    # # Advance: try forward model with dataloader
-    # # can be fake sample， but here get from dataloader for simpler
-    vla_dataset_cfg = cfg.datasets.vla_data
-    from torch.utils.data import DataLoader
-    from starVLA.dataloader.lerobot_datasets import get_vla_dataset, collate_fn
-    cfg.datasets.vla_data.include_state = "False"
-    dataset = get_vla_dataset(data_cfg=vla_dataset_cfg)
-
-    train_dataloader = DataLoader(
-        dataset,
-        batch_size=2,
-        num_workers=1,  # For Debug
-        collate_fn=collate_fn,
-    )
-    # 
-    for batch in tqdm(train_dataloader, desc="Processing Batches"):
-        batch
-        break
-
-    # try get model
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)
-    model(batch)
-
-    action = model.predict_action(examples=batch)
-    print("Finished")

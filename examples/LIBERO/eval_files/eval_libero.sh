@@ -1,37 +1,44 @@
 #!/usr/bin/env bash
-source /opt/miniforge/etc/profile.d/conda.sh
-conda activate starVLA
-cd /dataset/vkevinzhao/code/starVLA/
+eval "$(conda shell.bash hook)"
+conda activate libero
 
-###########################################################################################
-# === Please modify the following paths according to your environment ===
-export LIBERO_HOME=/dataset/vkevinzhao/code/LIBERO/
+cd /project/vonneumann1/zxr/code/starVLA
+
+export LIBERO_HOME=/project/vonneumann1/zxr/code/LIBERO
+export LIBERO_DATASET_PATH=/project/vonneumann1/zxr/datasets/LIBERO
 export LIBERO_CONFIG_PATH=${LIBERO_HOME}/libero
-export LIBERO_Python=/dataset/vkevinzhao/.conda/envs/libero/bin/python
+export LIBERO_Python=/home/zwanggk/.conda/envs/libero/bin/python
 
-export PYTHONPATH=$PYTHONPATH:${LIBERO_HOME} # let eval_libero find the LIBERO tools
-export PYTHONPATH=$(pwd):${PYTHONPATH} # let LIBERO find the websocket tools from main repo
+export MUJOCO_GL=egl
+export PYOPENGL_PLATFORM=egl
+export CUDA_VISIBLE_DEVICES=0
+unset DISPLAY
 
+export PYTHONPATH=$PYTHONPATH:${LIBERO_HOME}
+export PYTHONPATH=$(pwd):${PYTHONPATH}
+
+# ===== 接收参数 =====
+your_ckpt=$1
+task_suite_name=$2
+base_port=${3:-5694}
+
+if [ -z "$your_ckpt" ] || [ -z "$task_suite_name" ]; then
+    echo "Usage: eval_libero.sh <ckpt_path> <task_suite_name> [port]"
+    exit 1
+fi
 
 host="127.0.0.1"
-base_port=5694
 unnorm_key="franka"
-your_ckpt=/dataset/vkevinzhao/models/Qwen2.5-VL-GR00T-LIBERO-4in1/checkpoints/steps_30000_pytorch_model.pt
-# export DEBUG=true
-unset DEBUG
+num_trials_per_task=50
 
 folder_name=$(echo "$your_ckpt" | awk -F'/' '{print $(NF-2)"_"$(NF-1)"_"$NF}')
-# === End of environment variable configuration ===
-###########################################################################################
 
-LOG_DIR="logs/$(date +"%Y%m%d_%H%M%S")"
-mkdir -p ${LOG_DIR}
-
-
-task_suite_name=libero_goal
-num_trials_per_task=50
 video_out_path="results/${task_suite_name}/${folder_name}"
 
+echo "Evaluating:"
+echo "CKPT: $your_ckpt"
+echo "TASK: $task_suite_name"
+echo "PORT: $base_port"
 
 ${LIBERO_Python} ./examples/LIBERO/eval_files/eval_libero.py \
     --args.pretrained-path ${your_ckpt} \
