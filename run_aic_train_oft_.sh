@@ -1,3 +1,8 @@
+#!/usr/bin/env bash
+# source /opt/miniforge/etc/profile.d/conda.sh
+eval "$(conda shell.bash hook)"
+conda activate starVLA
+
 export NCCL_SOCKET_IFNAME=bond0
 export NCCL_IB_HCA=mlx5_2,mlx5_3
 
@@ -11,16 +16,17 @@ export NCCL_TIMEOUT=1000  # timeout set to 1 hour (unit: seconds)
 ###########################################################################################
 
 Framework_name=QwenOFT
-base_vlm=StarVLA/Qwen3-VL-4B-Instruct-Action
+base_vlm=playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
 action_input_dim=2560
-oxe_data_root=playground/Datasets/OXE_LEROBOT
-data_mix=bridge_rt_1
+oxe_data_root=playground/Datasets/AIC
+data_mix=aic
 run_root_dir=./playground/Checkpoints
-run_id=1004_starvla_qwenoft_oxe
+run_id=oft_v0
 # === End of environment variable configuration ===
 ###########################################################################################
 
-export WANDB_MODE=disabled
+export WANDB_API_KEY=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
+wandb login
 
 output_dir=${run_root_dir}/${run_id}
 mkdir -p ${output_dir}
@@ -38,17 +44,17 @@ accelerate launch \
   --framework.action_model.action_hidden_dim ${action_input_dim} \
   --datasets.vla_data.data_root_dir ${oxe_data_root}\
   --datasets.vla_data.data_mix ${data_mix} \
-  --datasets.vla_data.per_device_batch_size 16 \
+  --datasets.vla_data.per_device_batch_size 13 \
+  --trainer.vla_data.video_backend pyav \
   --trainer.freeze_modules ${freeze_module_list} \
   --trainer.max_train_steps 100000 \
   --trainer.save_interval 20000 \
   --trainer.logging_frequency 10 \
   --trainer.eval_interval 100 \
-  --trainer.learning_rate.base 4e-5 \
   --run_root_dir ${run_root_dir} \
   --run_id ${run_id} \
-  --wandb_project starVLA \
-  --wandb_entity jinhuiye \
+  --wandb_project starVLA_AIC \
+  --wandb_entity deepkevin0122-hong-kong-university-of-science-and-technology \
   # --is_debug True
 
 

@@ -91,12 +91,13 @@ class Qwen_GR00T(baseframework):
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
         actions = [example["action"] for example in examples]  # label [B， len, 7]
-        
+        task_module = [example["task_module"] for example in examples]
+        task_port = [example["task_port"] for example in examples]
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
         
 
         # Step 1: QWenVL input format
-        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
+        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions, task_module=task_module, task_port=task_port)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             qwenvl_outputs = self.qwen_vl_interface(
                 **qwen_inputs,
@@ -128,8 +129,6 @@ class Qwen_GR00T(baseframework):
                 state_repeated = state.repeat(repeated_diffusion_steps, 1, 1)
 
             action_loss = self.action_model(last_hidden_repeated, actions_target_repeated, state_repeated)  # (B, chunk_len, action_dim)
-
-
 
         return {"action_loss": action_loss}
 

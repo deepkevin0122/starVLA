@@ -17,13 +17,14 @@ framework:
 
   action_model:
     action_model_type: DiT-B
+    action_hidden_dim: 1024
     hidden_size: 1024     # 和 DiT 最后的 projection 对应，用于 ActionDecoder
     add_pos_embed: True
     max_seq_len: 1024
     action_dim: 7
     state_dim: 7
-    future_action_window_size: 15
-    action_horizon: 16
+    future_action_window_size: 31
+    action_horizon: 32
     past_action_window_size: 0
     repeated_diffusion_steps: 8
     noise_beta_alpha: 1.5
@@ -59,17 +60,19 @@ datasets:
     per_device_batch_size: 4
 
   vla_data:
+    include_state: True
     dataset_py: lerobot_datasets
-    data_root_dir: playground/Datasets/OXE_LEROBOT_DATASET
+    data_root_dir: playground/Datasets/AIC
     data_mix: bridge_rt_1 # bridge_rt_1
     action_type: delta_ee
-    CoT_prompt: "Your task is {instruction}. To identify the key objects for your task. Locate their bounding boxes in [x1,y1,x2,y2] format."
+    CoT_prompt: "The board contains two regions: zoom1 (SC area) and zoom2 (NIC card area). Your task is {instruction}. First mentally rotate the image so the board is upright.Zoom1: two rails, each containing at most one SC port. The SC port closer to the NIC card is sc_port_0; the farther one is sc_port_1. Zoom2: up to 5 NIC cards. The NIC card mount closest to the board outer edge is nic_card_mount_0; indices increase toward the inside. Each NIC card has two SFP ports. The port closer to the board outer edge is sfp_port_0; the inner one is sfp_port_1.Output:{'target_port_position':[x,y,z],'target_port_quaternion':[qx,qy,qz,qw]}"
     CoT_answer: bbox
-    default_image_resolution: [3, 224, 224]
+    default_image_resolution: [3, 256, 288]
     per_device_batch_size: 16
     load_all_data_for_training: true
     obs: ["image_0"]
-    image_size: [224,224]
+    image_size: [256,288]
+    video_backend: torchvision_av
 
 trainer:
   epochs: 100

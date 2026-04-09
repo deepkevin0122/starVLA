@@ -61,6 +61,7 @@ EMBODIMENT_TAG_MAPPING = {
     EmbodimentTag.AGIBOT_GENIE1.value: 26,
     EmbodimentTag.GR1.value: 24,
     EmbodimentTag.FRANKA.value: 25,
+
 }
 
 # Robot type to embodiment tag mapping

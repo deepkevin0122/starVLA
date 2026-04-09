@@ -108,7 +108,7 @@ class _QWen3_VL_Interface(nn.Module):
             )
         return generation_output
 
-    def build_qwenvl_inputs(self, images, instructions, solutions=None, **kwargs):
+    def build_qwenvl_inputs(self, images, instructions, task_module, task_port, solutions=None, **kwargs):
         """
         Build model inputs from raw data (images + instructions + optional solutions).
         Follow Oficial Qwen3-VL Instruct format: https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct
@@ -117,12 +117,14 @@ class _QWen3_VL_Interface(nn.Module):
         # Create messages: one message per sample
         messages = []
         assert len(images) == len(instructions), "Images and instructions must have the same length"
-        for imgs, instruction in zip(images, instructions):
+        for imgs, instruction, mod, port in zip(images, instructions,task_module, task_port):
             content = [{"type": "image", "image": img} for img in imgs]
 
             if "CoT_prompt" in self.config.datasets.vla_data:  # If using a grounding prompt to task
                 CoT_prompt = self.config.datasets.vla_data.get("CoT_prompt", "")
-                prompt = CoT_prompt.replace("{instruction}", instruction)
+                instru = f"Plug in the {port} of {mod}."
+                prompt = CoT_prompt.replace("{instruction}", instru) + instruction
+                print(prompt)
             else:
                 prompt = instruction
 

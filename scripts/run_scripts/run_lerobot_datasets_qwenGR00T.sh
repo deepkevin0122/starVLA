@@ -11,13 +11,13 @@ export NCCL_TIMEOUT=1000  # timeout set to 1 hour (unit: seconds)
 ###########################################################################################
 
 Framework_name=QwenGR00T
-base_vlm=StarVLA/Qwen3-VL-4B-Instruct-Action
+base_vlm=playground/Pretrained_models/Qwen3-VL-4B-Instruct
 action_input_dim=2560
 DIT_TYPE="DiT-B"
 oxe_data_root=playground/Datasets/OXE_LEROBOT
-data_mix=bridge_rt_1
+data_mix=aic
 run_root_dir=./playground/Checkpoints
-run_id=1004_starvla_qwengroot_oxe
+run_id=aic_first_run
 # === End of environment variable configuration ===
 ###########################################################################################
 
@@ -45,8 +45,8 @@ accelerate launch \
   --trainer.eval_interval 100 \
   --run_root_dir ${run_root_dir} \
   --run_id ${run_id} \
-  --wandb_project starVLA \
-  --wandb_entity jinhuiye \
+  --wandb_project starVLA-AIC \
+  --wandb_entity deepkevin0122-hong-kong-university-of-science-and-technology \
   # --is_debug True
 
 

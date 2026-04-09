@@ -17,9 +17,9 @@ export NCCL_SOCKET_TIMEOUT_MS=360000
 # === Please modify the following paths according to your environment ===
 Framework_name=QwenOFT
 freeze_module_list=''
-base_vlm=./playground/Pretrained_models/Qwen3-VL-4B-Instruct
+base_vlm=playground/Pretrained_models/Qwen3-VL-4B-Instruct
 config_yaml=./examples/LIBERO/train_files/starvla_cotrain_libero.yaml
-data_root=./playground/Datasets/AIC
+data_root=playground/Datasets/AIC
 data_mix=aic
 run_root_dir=./results/Checkpoints
 # === End of environment variable configuration ===
@@ -28,7 +28,7 @@ run_root_dir=./results/Checkpoints
 export WANDB_API_KEY=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
 wandb login
 
-run_id="AIC_test"
+run_id="AIC_v0"
 output_dir=${run_root_dir}/${run_id}
 mkdir -p ${output_dir}
 cp $0 ${output_dir}/
@@ -42,7 +42,7 @@ accelerate launch \
   --framework.qwenvl.base_vlm ${base_vlm} \
   --datasets.vla_data.data_root_dir ${data_root} \
   --datasets.vla_data.data_mix ${data_mix} \
-  --datasets.vla_data.per_device_batch_size 32 \
+  --datasets.vla_data.per_device_batch_size 24 \
   --trainer.vla_data.video_backend pyav \
   --trainer.freeze_modules ${freeze_module_list} \
   --trainer.max_train_steps 100000 \

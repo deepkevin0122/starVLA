@@ -113,6 +113,10 @@ class LeRobotModalityMetadata(BaseModel):
         ...,
         description="The metadata for the video modality. The keys are the new names of each video modality.",
     )
+    task: dict[str, LeRobotModalityField] = Field(
+        ...,
+        description="The metadata for the task modality. The keys are the new names of each task modality.",
+    )
     annotation: Optional[dict[str, LeRobotModalityField]] = Field(
         default=None,
         description="The metadata for the annotation modality. The keys are the new names of each annotation modality.",
@@ -154,6 +158,12 @@ class LeRobotModalityMetadata(BaseModel):
                     f"Key: {key}, video key {subkey} not found in metadata, available video keys: {self.video.keys()}"
                 )
             return self.video[subkey]
+        elif modality == "task":
+            if subkey not in self.task:
+                raise ValueError(
+                    f"Key: {key}, task key {subkey} not found in metadata, available task keys: {self.task.keys()}"
+                )
+            return self.task[subkey]
         elif modality == "annotation":
             assert (
                 self.annotation is not None

@@ -513,6 +513,86 @@ class Libero4in1DataConfig:
 
 ###########################################################################################
 
+class AICDataConfig:
+
+    # ===================== 各模态关键字分类 =====================
+    # 视频图像键
+    video_keys = [
+        "video.left",
+        "video.center",
+        "video.right",
+    ]
+    
+    # 机器人状态键
+    state_keys = [
+        "state.state",
+    ]
+    
+    # 动作键
+    action_keys = [
+        "action.action",
+    ]
+
+    task_keys = [
+        "task.task_module",
+        "task.task_port"
+    ]
+
+    language_keys = ["annotation.human.action.task_description"]
+
+    observation_indices = [0]   
+    action_indices = list(range(32))
+    state_indices = list(range(-16,0))
+
+    # ===================== 模态配置 =====================
+    def modality_config(self):
+        video_modality = ModalityConfig(
+            delta_indices=self.observation_indices,
+            modality_keys=self.video_keys,
+        )
+        state_modality = ModalityConfig(
+            delta_indices=self.state_indices,
+            modality_keys=self.state_keys,
+        )
+        action_modality = ModalityConfig(
+            delta_indices=self.action_indices,
+            modality_keys=self.action_keys,
+        )
+        task_modality = ModalityConfig(
+            delta_indices=self.observation_indices,
+            modality_keys=self.task_keys,
+        )
+        language_modality = ModalityConfig(
+            delta_indices=self.observation_indices,
+            modality_keys=self.language_keys,
+        )
+        modality_configs = {
+            "video": video_modality,
+            "state": state_modality,
+            "action": action_modality,
+            "task": task_modality,
+            "language": language_modality,
+        }
+        return modality_configs
+
+    # ===================== 数据预处理 Transform =====================
+    def transform(self):
+        transforms = [
+            # 动作转 Tensor
+            StateActionToTensor(apply_to=self.action_keys),
+            # 动作归一化
+            StateActionTransform(
+                apply_to=self.action_keys,
+                normalization_modes={
+                    # "action.action": "min_max",
+                },
+            ),
+        ]
+        return ComposedModalityTransform(transforms=transforms)
+
+###########################################################################################
+
+
 
 class SingleFrankaRobotiqDeltaJointsDataConfig:
     video_keys = [
@@ -994,7 +1074,7 @@ ROBOT_TYPE_CONFIG_MAP = {
     "robotwin": AgilexDataConfig(),
     "robotwin50": AgilexData50Config(),
     "fourier_gr1_arms_waist": FourierGr1ArmsWaistDataConfig(),
-    
+    "aic_robot": AICDataConfig(),
     "custom_robot_config": SingleFrankaRobotiqDeltaEefDataConfig(),
 }
 

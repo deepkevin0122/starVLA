@@ -802,8 +802,8 @@ class LeRobotSingleDataset(Dataset):
             if original_key is None:
                 original_key = new_key
             le_video_meta = le_info["features"][original_key]
-            height = le_video_meta["shape"][le_video_meta["names"].index("height")]
-            width = le_video_meta["shape"][le_video_meta["names"].index("width")]
+            height = 256
+            width = 288
             # NOTE(FH): different lerobot dataset versions have different keys for the number of channels and fps
             try:
                 channels = le_video_meta["shape"][le_video_meta["names"].index("channel")]
@@ -1376,7 +1376,7 @@ class LeRobotSingleDataset(Dataset):
         wrist_views = []
         for video_key in self.modality_keys["video"]:
             image = data[video_key][0]
-            image = Image.fromarray(image).resize((224, 224))
+            image = Image.fromarray(image).resize((256, 288))
             if "wrist" not in video_key:
                 prim_images.append(image)
             else:
@@ -1388,12 +1388,16 @@ class LeRobotSingleDataset(Dataset):
         for action_key in self.modality_keys["action"]:
             action.append(data[action_key])
         action = np.concatenate(action, axis=1).astype(np.float16)
+        task_module = data[self.modality_keys["task"][0]]
+        task_port = data[self.modality_keys["task"][1]]
 
         sample = {
             "action": action,
             "image": all_images,
             "lang": language,
             "language": language,
+            "task_module": task_module,
+            "task_port": task_port,
         }
 
         if self.data_cfg is not None and self.data_cfg.get("include_state", False) not in ["False", False]:
@@ -1628,6 +1632,32 @@ class LeRobotSingleDataset(Dataset):
             video_backend_kwargs=self.video_backend_kwargs,
         )
 
+    def get_task(
+        self,
+        trajectory_id: int,
+        key: str,
+        base_index: int,
+    ) -> str:
+
+        trajectory_index = self.get_trajectory_index(trajectory_id)
+        max_length = self.trajectory_lengths[trajectory_index]
+
+        assert key.startswith("task."), f"{key} must start with 'task.', got {key}"
+        key = key.replace("task.", "")
+
+        task_cfg = getattr(self.lerobot_modality_meta, "task")
+        le_key = task_cfg[key].original_key
+        if le_key is None:
+            le_key = key
+
+        assert self.curr_traj_data is not None
+        assert le_key in self.curr_traj_data.columns
+
+        # 防止越界
+        base_index = max(0, min(base_index, max_length - 1))
+
+        return self.curr_traj_data[le_key].iloc[base_index]
+
     def get_state_or_action(
         self,
         trajectory_id: int,
@@ -1758,6 +1788,8 @@ class LeRobotSingleDataset(Dataset):
             return self.get_video(trajectory_id, key, base_index)
         elif modality == "state" or modality == "action":
             return self.get_state_or_action(trajectory_id, modality, key, base_index)
+        elif modality == "task":
+            return self.get_task(trajectory_id, key, base_index)        
         elif modality == "language":
             return self.get_language(trajectory_id, key, base_index)
         else:
