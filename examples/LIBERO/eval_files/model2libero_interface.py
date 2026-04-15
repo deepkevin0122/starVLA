@@ -85,7 +85,7 @@ class ModelClient:
         example: dict,
         step: int = 0,
         **kwargs
-    ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    ) :
         """
         Perform one step of inference
         :param image: Input image in the format (H, W, 3), type uint8
@@ -114,21 +114,22 @@ class ModelClient:
         if step % action_chunk_size == 0:
             response = self.client.predict_action(vla_input)
             try:
-                normalized_actions = response["data"]["normalized_actions"] # B, chunk, D        
+                normalized_actions = response["data"]["normalized_actions"] # B, chunk, D 
+                print(normalized_actions)       
             except KeyError:
                 print(f"Response data: {response}")
                 raise KeyError(f"Key 'normalized_actions' not found in response data: {response['data'].keys()}")
             
             normalized_actions = normalized_actions[0]    
-            self.raw_actions = self.unnormalize_actions(normalized_actions=normalized_actions, action_norm_stats=self.action_norm_stats)
+            self.raw_actions = normalized_actions # self.unnormalize_actions(normalized_actions=normalized_actions, action_norm_stats=self.action_norm_stats)
         
-        raw_actions = self.raw_actions[step % action_chunk_size][None]    
+        raw_actions = self.raw_actions[step % action_chunk_size][None]
 
         raw_action = {
             "world_vector": np.array(raw_actions[0, :3]),
-            "rotation_delta": np.array(raw_actions[0, 3:6]),
-            "open_gripper": np.array(raw_actions[0, 6:7]),  # range [0, 1]; 1 = open; 0 = close
+            "rotation_delta": np.array(raw_actions[0, 3:7]),
         }
+        print(raw_action)
 
         return {"raw_action": raw_action}
 

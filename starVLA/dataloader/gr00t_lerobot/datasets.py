@@ -1376,7 +1376,7 @@ class LeRobotSingleDataset(Dataset):
         wrist_views = []
         for video_key in self.modality_keys["video"]:
             image = data[video_key][0]
-            image = Image.fromarray(image).resize((256, 288))
+            image = Image.fromarray(image).resize((288, 256))
             if "wrist" not in video_key:
                 prim_images.append(image)
             else:
