@@ -105,13 +105,13 @@ if __name__ == "__main__":
     # import debugpy
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config_yaml", type=str, default="./starVLA/config/training/starvla_cotrain_behavior.yaml", help="Path to YAML config")
+    parser.add_argument("--config_yaml", type=str, default="/project/vonneumann1/zxr/code/starVLA/playground/Checkpoints/oft_v0/config.yaml", help="Path to YAML config")
     args, clipargs = parser.parse_known_args()
 
     # debugpy.listen(("0.0.0.0", 10092))
     # print("🔍 Rank 0 waiting for debugger attach on port 10092...")
     # debugpy.wait_for_client()
-    args.config_yaml = "./examples/MultiRobot/train_files/starvla_cotrain_multiRobot.yaml"
+    args.config_yaml = "./playground/Checkpoints/oft_v0_13/config.yaml"
     cfg = OmegaConf.load(args.config_yaml)
     # cfg.datasets.vla_data.data_mix = "robotwin"
     vla_dataset_cfg = cfg.datasets.vla_data
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     from torch.utils.data import DataLoader
     train_dataloader = DataLoader(
         dataset,
-        batch_size=2,
+        batch_size=1,
         num_workers=1, # For Debug
         collate_fn=collate_fn,
     )
@@ -133,12 +133,19 @@ if __name__ == "__main__":
     cfg.output_dir = "./results/debug"
     output_dir = Path(cfg.output_dir)
     dataset.save_dataset_statistics(output_dir / "dataset_statistics.json")
+    vla_iter = iter(train_dataloader)
+
 
     from tqdm import tqdm
     count = 0
     for batch in tqdm(train_dataloader, desc="Processing Batches"):
-        # print(batch)
-        # print(1)
+        batch_vla = next(vla_iter)
+        images = batch_vla[0]["image"] 
+        for i, img in enumerate(images):
+            print(f"Image {count}_{i} resolution: {img.size}")
+            img.save(f"image_{count}_{i}.png")   # 保存到当前目录               # 显示
+        input("Press Enter to continue...")  # 暂停
+        print(batch_vla)
         if count > 100:
             break
         count += 1

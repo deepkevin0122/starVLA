@@ -71,7 +71,7 @@ datasets:
     per_device_batch_size: 16
     load_all_data_for_training: true
     obs: ["image_0"]
-    image_size: [256,288]
+    image_size: [288, 256]
     video_backend: torchvision_av
 
 trainer:
