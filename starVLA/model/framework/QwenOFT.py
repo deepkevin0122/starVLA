@@ -115,20 +115,16 @@ class Qwenvl_OFT(baseframework):
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
         actions = [example["action"] for example in examples]  # label [B， len, 7]
-        
+        state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
+        task_module = [example["task_module"] for example in examples]
+        task_port = [example["task_port"] for example in examples]
         # step 0: add special action token to instruction
         action_tokens = self.action_token * self.chunk_len #can't add " " between two tokens, otherwise will be tokenized to multiple tokens
         prompt_suffix = f" Please predict the next {self.chunk_len} robot actions: <action>{action_tokens}<action>."
-        instructions = [prompt_suffix for instruction in instructions] # modified
-
-
-        task_module = [example["task_module"] for example in examples]
-        task_port = [example["task_port"] for example in examples]
-        state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
-        
-
+        instructions = self.add_discretized_state_to_instruction(instructions, state)
+        instructions = [instruction + prompt_suffix for instruction in instructions] # modified
         # Step 1: QWenVL input format
-        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions, task_module=task_module, task_port=task_port)
+        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             qwenvl_outputs = self.qwen_vl_interface(
                 **qwen_inputs,
@@ -178,19 +174,18 @@ class Qwenvl_OFT(baseframework):
         """
         if type(examples) is not list:
             examples = [examples]
-        batch_images = [to_pil_preserve(example["image"]) for example in examples]  #  [B，[PLT]]
+        batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
+        state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
         task_module = [example["task_module"] for example in examples]
         task_port = [example["task_port"] for example in examples]
         # step 0: add special action token to instruction
-        action_tokens = self.action_token* self.chunk_len #can't add " " between two tokens, otherwise will be tokenized to multiple tokens
+        action_tokens = self.action_token * self.chunk_len #can't add " " between two tokens, otherwise will be tokenized to multiple tokens
         prompt_suffix = f" Please predict the next {self.chunk_len} robot actions: <action>{action_tokens}<action>."
-        instructions = [prompt_suffix for instruction in instructions] # modified
-
+        instructions = self.add_discretized_state_to_instruction(instructions, state)
+        instructions = [instruction + prompt_suffix for instruction in instructions] # modified
         # Step 1: QWenVL input format
-        state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
-        # Step 1: QWenVL input format
-        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions, task_module=task_module, task_port=task_port)
+        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             qwenvl_outputs = self.qwen_vl_interface(
                 **qwen_inputs,
@@ -200,6 +195,7 @@ class Qwenvl_OFT(baseframework):
             )
             # last_hidden_state: [B, seq_len, H]
             last_hidden = qwenvl_outputs.hidden_states[-1]   # [B, L, H]
+
 
         # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):
@@ -263,6 +259,21 @@ class Qwenvl_OFT(baseframework):
         expanded_index = selected_pos.unsqueeze(-1).expand(-1, -1, H)   # [B, chunk_len, H]
         action_queries = last_hidden.gather(dim=1, index=expanded_index)  # [B, chunk_len, H]
         return action_queries
+    
+    def state2str_transform(self, state):
+        # This is the Pi05 format, where the state is part of the discrete language input.
+        discretized_state = np.digitize(state, bins=np.linspace(-1,1,256 + 1)[:-1]) - 1
+        state_str = " ".join(map(str, discretized_state))
+
+        return state_str
+    def add_discretized_state_to_instruction(self, instructions: List[str], states: List[np.ndarray]) -> List[str]:
+        # Convert each state to string and append to corresponding instruction
+        updated_instructions = []
+        for instr, state in zip(instructions, states):
+            state_str = self.state2str_transform(state[0])
+            updated_instr = f"{instr} [STATE] {state_str} [ACTION]"
+            updated_instructions.append(updated_instr)
+        return updated_instructions
 
 
 if __name__ == "__main__":
