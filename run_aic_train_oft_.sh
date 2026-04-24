@@ -18,10 +18,10 @@ export NCCL_TIMEOUT=1000  # timeout set to 1 hour (unit: seconds)
 Framework_name=QwenOFT
 base_vlm=playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
 action_input_dim=2560
-oxe_data_root=playground/Datasets/AIC
+data_root=playground/Datasets/AIC
 data_mix=aic
 run_root_dir=./playground/Checkpoints
-run_id=oft_v0
+run_id=oft_v0_12
 # === End of environment variable configuration ===
 ###########################################################################################
 
@@ -42,10 +42,10 @@ accelerate launch \
   --framework.name ${Framework_name} \
   --framework.qwenvl.base_vlm ${base_vlm} \
   --framework.action_model.action_hidden_dim ${action_input_dim} \
-  --datasets.vla_data.data_root_dir ${oxe_data_root}\
+  --datasets.vla_data.data_root_dir ${data_root}\
   --datasets.vla_data.data_mix ${data_mix} \
-  --datasets.vla_data.per_device_batch_size 13 \
-  --trainer.vla_data.video_backend pyav \
+  --datasets.vla_data.per_device_batch_size 12 \
+  --datasets.vla_data.video_backend pyav \
   --trainer.freeze_modules ${freeze_module_list} \
   --trainer.max_train_steps 100000 \
   --trainer.save_interval 20000 \

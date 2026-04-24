@@ -13,7 +13,7 @@ from typing import Dict, List, Tuple
 DATASET_NAMED_MIXTURES = {
 
     "aic":[
-        ("merged_dataset", 1.0, "aic_robot")
+        ("clean_merged_v1", 1.0, "aic_robot")
     ],
     "custom_dataset": [
         ("custom_dataset_name", 1.0, "custom_robot_config"),

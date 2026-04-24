@@ -111,7 +111,7 @@ if __name__ == "__main__":
     # debugpy.listen(("0.0.0.0", 10092))
     # print("🔍 Rank 0 waiting for debugger attach on port 10092...")
     # debugpy.wait_for_client()
-    args.config_yaml = "./playground/Checkpoints/oft_v0_13/config.yaml"
+    args.config_yaml = "./starVLA/config/training/starvla_cotrain_oxe.yaml"
     cfg = OmegaConf.load(args.config_yaml)
     # cfg.datasets.vla_data.data_mix = "robotwin"
     vla_dataset_cfg = cfg.datasets.vla_data
@@ -139,13 +139,14 @@ if __name__ == "__main__":
     from tqdm import tqdm
     count = 0
     for batch in tqdm(train_dataloader, desc="Processing Batches"):
-        batch_vla = next(vla_iter)
+        batch_vla = batch # next(vla_iter)
         images = batch_vla[0]["image"] 
         for i, img in enumerate(images):
             print(f"Image {count}_{i} resolution: {img.size}")
             img.save(f"image_{count}_{i}.png")   # 保存到当前目录               # 显示
-        input("Press Enter to continue...")  # 暂停
+        
         print(batch_vla)
+        input("Press Enter to continue...")  # 暂停
         if count > 100:
             break
         count += 1

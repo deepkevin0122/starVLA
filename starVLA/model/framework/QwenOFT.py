@@ -117,7 +117,7 @@ class Qwenvl_OFT(baseframework):
         actions = [example["action"] for example in examples]  # label [B， len, 7]
         
         # step 0: add special action token to instruction
-        action_tokens = self.action_token* self.chunk_len #can't add " " between two tokens, otherwise will be tokenized to multiple tokens
+        action_tokens = self.action_token * self.chunk_len #can't add " " between two tokens, otherwise will be tokenized to multiple tokens
         prompt_suffix = f" Please predict the next {self.chunk_len} robot actions: <action>{action_tokens}<action>."
         instructions = [prompt_suffix for instruction in instructions] # modified
 
@@ -144,18 +144,6 @@ class Qwenvl_OFT(baseframework):
             # 提取动作 token embedding 作为动作预测查询
             input_ids = qwen_inputs.get("input_ids", None)
             action_queries = self._gather_action_token_embeddings(last_hidden, input_ids, action_token_id=self.action_token_id)  # [B, chunk_len, H]
-            """
-            # ===================== 关键：把 state 拼进去 =====================
-            # 转 tensor
-            states = torch.tensor(np.array(states), device=action_queries.device, dtype=action_queries.dtype)
-            # 取当前帧 state (第一帧)
-            states = states[:, 0:1, :]  # [B, 1, 25]
-            # 扩展成和 chunk len 一样长
-            states = states.repeat(1, self.chunk_len, 1)  # [B, chunk_len, 25]
-
-            # 拼接：vision feature + state
-            action_queries = torch.cat([action_queries, states], dim=-1)
-            """
 
             pred_actions = self.action_model.predict_action(action_queries)  # (B, chunk_len, action_dim)
 

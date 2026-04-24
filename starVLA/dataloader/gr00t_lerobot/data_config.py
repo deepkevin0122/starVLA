@@ -584,7 +584,6 @@ class AICDataConfig:
             StateActionTransform(
                 apply_to=self.action_keys,
                 normalization_modes={
-                    # "action.action": "min_max",
                 },
             ),
         ]

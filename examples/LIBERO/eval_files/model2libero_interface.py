@@ -105,8 +105,8 @@ class ModelClient:
         vla_input = {
             "examples": [example],
             "do_sample": False,
-            "use_ddim": self.use_ddim,
-            "num_ddim_steps": self.num_ddim_steps,
+            "use_ddim": True,
+            "num_ddim_steps": 20,
         }
         
 
@@ -114,20 +114,21 @@ class ModelClient:
         if step % action_chunk_size == 0:
             response = self.client.predict_action(vla_input)
             try:
-                normalized_actions = response["data"]["normalized_actions"] # B, chunk, D 
-                print(normalized_actions)       
+                normalized_actions = response["data"]["normalized_actions"] # B, chunk, D     
             except KeyError:
                 print(f"Response data: {response}")
                 raise KeyError(f"Key 'normalized_actions' not found in response data: {response['data'].keys()}")
             
             normalized_actions = normalized_actions[0]    
+            print(normalized_actions)
             self.raw_actions = normalized_actions # self.unnormalize_actions(normalized_actions=normalized_actions, action_norm_stats=self.action_norm_stats)
         
         raw_actions = self.raw_actions[step % action_chunk_size][None]
 
         raw_action = {
             "world_vector": np.array(raw_actions[0, :3]),
-            "rotation_delta": np.array(raw_actions[0, 3:7]),
+            "rotation_delta": np.array(raw_actions[0, 3:6]),
+            "success": np.array(raw_actions[0, 6]),
         }
         print(raw_action)
 
@@ -138,7 +139,8 @@ class ModelClient:
         mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["min"], dtype=bool))
         action_high, action_low = np.array(action_norm_stats["max"]), np.array(action_norm_stats["min"])
         normalized_actions = np.clip(normalized_actions, -1, 1)
-        normalized_actions[:, 6] = np.where(normalized_actions[:, 6] < 0.5, 0, 1) 
+        # normalized_actions[:, 6] = np.where(normalized_actions[:, 6] < 0.5, 0, 1) 
+        print(mask)
         actions = np.where(
             mask,
             0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,

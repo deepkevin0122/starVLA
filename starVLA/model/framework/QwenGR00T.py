@@ -94,8 +94,8 @@ class Qwen_GR00T(baseframework):
         task_module = [example["task_module"] for example in examples]
         task_port = [example["task_port"] for example in examples]
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
-        
 
+        
         # Step 1: QWenVL input format
         qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions, task_module=task_module, task_port=task_port)
         with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -151,15 +151,19 @@ class Qwen_GR00T(baseframework):
             examples = [examples]
         batch_images = [to_pil_preserve(example["image"]) for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
-    
+        task_module = [example["task_module"] for example in examples]
+        task_port = [example["task_port"] for example in examples]
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
+        action = [example["action"] for example in examples] if "action" in examples[0] else None  # [B, T_full, action_dim]
+        print(state[0])
+        state = None
         
         train_obs_image_size = getattr(self.config.datasets.vla_data, "image_size", None)
         if train_obs_image_size:
             batch_images = resize_images(batch_images, target_size=train_obs_image_size)
     
         # Step 1: QWenVL input format
-        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
+        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions, task_module=task_module, task_port=task_port)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             qwenvl_outputs = self.qwen_vl_interface(
                 **qwen_inputs,
@@ -178,6 +182,7 @@ class Qwen_GR00T(baseframework):
             pred_actions = self.action_model.predict_action(last_hidden, state)  # (B, chunk_len, action_dim)
 
         normalized_actions = pred_actions.detach().cpu().numpy()
+        print(f"Predicted Normalized Actions: {normalized_actions[0]}, Ground Truth Actions: {action[0] if action is not None else 'N/A'}")
         return {"normalized_actions": normalized_actions}
 
 
