@@ -155,8 +155,6 @@ class Qwen_GR00T(baseframework):
         task_port = [example["task_port"] for example in examples]
         state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
         action = [example["action"] for example in examples] if "action" in examples[0] else None  # [B, T_full, action_dim]
-        print(state[0])
-        state = None
         
         train_obs_image_size = getattr(self.config.datasets.vla_data, "image_size", None)
         if train_obs_image_size:
