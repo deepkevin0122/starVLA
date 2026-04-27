@@ -21,7 +21,7 @@ action_input_dim=2560
 data_root=playground/Datasets/AIC
 data_mix=aic
 run_root_dir=./playground/Checkpoints
-run_id=oft_v0_12
+run_id=oft_v0_state
 # === End of environment variable configuration ===
 ###########################################################################################
 

@@ -15,13 +15,13 @@ export NCCL_TIMEOUT=1000  # timeout set to 1 hour (unit: seconds)
 # === Please modify the following paths according to your environment ===
 ###########################################################################################
 
-Framework_name=QwenGR00T
-base_vlm=playground/Pretrained_models/Qwen3-VL-4B-Instruct
+Framework_name=QwenOFT
+base_vlm=playground/Pretrained_models/Qwen3-VL-4B-Instruct-Action
 action_input_dim=2560
 data_root=playground/Datasets/AIC
 data_mix=aic
 run_root_dir=./playground/Checkpoints
-run_id=gr00t_v0_8
+run_id=oft_v0_state
 # === End of environment variable configuration ===
 ###########################################################################################
 

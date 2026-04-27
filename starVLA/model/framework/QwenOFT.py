@@ -84,7 +84,52 @@ class Qwenvl_OFT(baseframework):
         
         self.action_token = "🔍" # TODO also can add spacail token to Qwen, but too complex
         self.action_token_id = self.qwen_vl_interface.processor.tokenizer("🔍", add_special_tokens=False)["input_ids"][0]
+        self.min_v = np.array([
+            # position (m)
+            -0.6, -0.6, 0.0,
 
+            # orientation (quat)
+            -1.0, -1.0, -1.0, -1.0,
+
+            # linear vel (m/s)
+            -0.3, -0.3, -0.3,
+
+            # angular vel (rad/s)
+            -0.5, -0.5, -0.5,
+
+            # tcp_error (6)
+            -0.1, -0.1, -0.1, -0.1, -0.1, -0.1,
+
+            # force (N)
+            -40.0, -40.0, -80.0,
+
+            # torque (Nm)
+            -8.0, -8.0, -4.0
+        ], dtype=np.float32)
+
+
+        self.max_v = np.array([
+            # position
+            0.6, 0.6, 0.8,
+
+            # orientation
+            1.0, 1.0, 1.0, 1.0,
+
+            # linear vel
+            0.3, 0.3, 0.3,
+
+            # angular vel
+            0.5, 0.5, 0.5,
+
+            # tcp_error
+            0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
+
+            # force
+            40.0, 40.0, 80.0,
+
+            # torque
+            8.0, 8.0, 4.0
+        ], dtype=np.float32)
         # L1 损失
         self.l1_loss = nn.L1Loss()
 
@@ -262,6 +307,9 @@ class Qwenvl_OFT(baseframework):
     
     def state2str_transform(self, state):
         # This is the Pi05 format, where the state is part of the discrete language input.
+        state = state.astype(np.float32)
+        state = np.clip(state, self.min_v, self.max_v)
+        state = 2 * (state - self.min_v) / (self.max_v - self.min_v) - 1  # Normalize to [-1, 1]
         discretized_state = np.digitize(state, bins=np.linspace(-1,1,256 + 1)[:-1]) - 1
         state_str = " ".join(map(str, discretized_state))
 
@@ -270,7 +318,7 @@ class Qwenvl_OFT(baseframework):
         # Convert each state to string and append to corresponding instruction
         updated_instructions = []
         for instr, state in zip(instructions, states):
-            state_str = self.state2str_transform(state[0])
+            state_str = self.state2str_transform(state[-1])
             updated_instr = f"{instr} [STATE] {state_str} [ACTION]"
             updated_instructions.append(updated_instr)
         return updated_instructions
