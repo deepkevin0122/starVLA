@@ -84,62 +84,7 @@ class Qwenvl_OFT(baseframework):
         
         self.action_token = "🔍" # TODO also can add spacail token to Qwen, but too complex
         self.action_token_id = self.qwen_vl_interface.processor.tokenizer("🔍", add_special_tokens=False)["input_ids"][0]
-        self.min_v = np.array([
-            # position (m)
-            -0.6, -0.6, 0.0,
 
-            # orientation (quat)
-            -1.0, -1.0, -1.0, -1.0,
-
-            # linear vel (m/s)
-            -0.1, -0.1, -0.1,
-
-            # angular vel (rad/s)
-            -0.2, -0.2, -0.2,
-
-            # tcp_error (6)
-            -0.02,
-            -0.02,
-            -0.05,
-            -0.06,
-            -0.002,
-            -0.007,
-
-            # force (N)
-            -4.0, -4.0, 15,
-
-            # torque (Nm)
-            -0.6, -0.6, -0.2
-        ], dtype=np.float32)
-
-
-        self.max_v = np.array([
-            # position
-            0.6, 0.6, 0.6,
-
-            # orientation
-            1.0, 1.0, 1.0, 1.0,
-
-            # linear vel
-            0.1, 0.1, 0.1,
-
-            # angular vel
-            0.2, 0.2, 0.2,
-
-            # tcp_error
-            0.02,
-            0.02,
-            0.05,
-            0.01,
-            0.002,
-            0.003,
-
-            # force
-            4.0, 4.0, 25.0,
-
-            # torque
-            0.6, 0.6, 0.2
-        ], dtype=np.float32)
         # L1 损失
         self.l1_loss = nn.L1Loss()
 
@@ -170,16 +115,20 @@ class Qwenvl_OFT(baseframework):
         batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
         actions = [example["action"] for example in examples]  # label [B， len, 7]
-        state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
+        
+        # step 0: add special action token to instruction
+        action_tokens = self.action_token* self.chunk_len #can't add " " between two tokens, otherwise will be tokenized to multiple tokens
+        prompt_suffix = f" Please predict the next {self.chunk_len} robot actions: <action>{action_tokens}<action>."
+        instructions = [prompt_suffix for instruction in instructions] # modified
+
+
         task_module = [example["task_module"] for example in examples]
         task_port = [example["task_port"] for example in examples]
-        # step 0: add special action token to instruction
-        action_tokens = self.action_token * self.chunk_len #can't add " " between two tokens, otherwise will be tokenized to multiple tokens
-        prompt_suffix = f" Please predict the next {self.chunk_len} robot actions: <action>{action_tokens}<action>."
-        instructions = self.add_discretized_state_to_instruction(instructions, state)
-        instructions = [instruction + prompt_suffix for instruction in instructions] # modified
+        state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
+        
+
         # Step 1: QWenVL input format
-        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
+        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions, task_module=task_module, task_port=task_port)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             qwenvl_outputs = self.qwen_vl_interface(
                 **qwen_inputs,
@@ -195,6 +144,18 @@ class Qwenvl_OFT(baseframework):
             # 提取动作 token embedding 作为动作预测查询
             input_ids = qwen_inputs.get("input_ids", None)
             action_queries = self._gather_action_token_embeddings(last_hidden, input_ids, action_token_id=self.action_token_id)  # [B, chunk_len, H]
+            """
+            # ===================== 关键：把 state 拼进去 =====================
+            # 转 tensor
+            states = torch.tensor(np.array(states), device=action_queries.device, dtype=action_queries.dtype)
+            # 取当前帧 state (第一帧)
+            states = states[:, 0:1, :]  # [B, 1, 25]
+            # 扩展成和 chunk len 一样长
+            states = states.repeat(1, self.chunk_len, 1)  # [B, chunk_len, 25]
+
+            # 拼接：vision feature + state
+            action_queries = torch.cat([action_queries, states], dim=-1)
+            """
 
             pred_actions = self.action_model.predict_action(action_queries)  # (B, chunk_len, action_dim)
 
@@ -229,18 +190,19 @@ class Qwenvl_OFT(baseframework):
         """
         if type(examples) is not list:
             examples = [examples]
-        batch_images = [example["image"] for example in examples]  #  [B，[PLT]]
+        batch_images = [to_pil_preserve(example["image"]) for example in examples]  #  [B，[PLT]]
         instructions = [example["lang"] for example in examples]  # [B, str]
-        state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
         task_module = [example["task_module"] for example in examples]
         task_port = [example["task_port"] for example in examples]
         # step 0: add special action token to instruction
-        action_tokens = self.action_token * self.chunk_len #can't add " " between two tokens, otherwise will be tokenized to multiple tokens
+        action_tokens = self.action_token* self.chunk_len #can't add " " between two tokens, otherwise will be tokenized to multiple tokens
         prompt_suffix = f" Please predict the next {self.chunk_len} robot actions: <action>{action_tokens}<action>."
-        instructions = self.add_discretized_state_to_instruction(instructions, state)
-        instructions = [instruction + prompt_suffix for instruction in instructions] # modified
+        instructions = [prompt_suffix for instruction in instructions] # modified
+
         # Step 1: QWenVL input format
-        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions)
+        state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
+        # Step 1: QWenVL input format
+        qwen_inputs = self.qwen_vl_interface.build_qwenvl_inputs(images=batch_images, instructions=instructions, task_module=task_module, task_port=task_port)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             qwenvl_outputs = self.qwen_vl_interface(
                 **qwen_inputs,
@@ -250,7 +212,6 @@ class Qwenvl_OFT(baseframework):
             )
             # last_hidden_state: [B, seq_len, H]
             last_hidden = qwenvl_outputs.hidden_states[-1]   # [B, L, H]
-
 
         # Step 4: Action Expert Forward and Loss
         with torch.autocast("cuda", dtype=torch.float32):
@@ -314,24 +275,6 @@ class Qwenvl_OFT(baseframework):
         expanded_index = selected_pos.unsqueeze(-1).expand(-1, -1, H)   # [B, chunk_len, H]
         action_queries = last_hidden.gather(dim=1, index=expanded_index)  # [B, chunk_len, H]
         return action_queries
-    
-    def state2str_transform(self, state):
-        # This is the Pi05 format, where the state is part of the discrete language input.
-        state = state.astype(np.float32)
-        state = np.clip(state, self.min_v, self.max_v)
-        state = 2 * (state - self.min_v) / (self.max_v - self.min_v) - 1  # Normalize to [-1, 1]
-        discretized_state = np.digitize(state, bins=np.linspace(-1,1,256 + 1)[:-1]) - 1
-        state_str = " ".join(map(str, discretized_state))
-
-        return state_str
-    def add_discretized_state_to_instruction(self, instructions: List[str], states: List[np.ndarray]) -> List[str]:
-        # Convert each state to string and append to corresponding instruction
-        updated_instructions = []
-        for instr, state in zip(instructions, states):
-            state_str = self.state2str_transform(state[-1])
-            updated_instr = f"{instr} [STATE] {state_str} [ACTION]"
-            updated_instructions.append(updated_instr)
-        return updated_instructions
 
 
 if __name__ == "__main__":
